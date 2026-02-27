@@ -2,9 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '../../../utils/supabase/client'
-import { 
-  MessageSquare, Search, Package, Truck, CheckCircle, 
-  XCircle, AlertTriangle, MapPin, User, Loader2, RefreshCcw, 
+import { PageHeader } from '../../../components/admin/PageHeader'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal'
+import { parseApiError } from '../../../utils/http'
+import { Card, CardHeader, CardContent, Button, Badge, Input } from '../../../components/ui'
+import { TabsRoot, Tab } from '../../../components/ui'
+import {
+  Search, Package, Truck, CheckCircle, AlertTriangle, Loader2, RefreshCcw,
   Ticket, Send, ArrowLeft, ArrowRight, ShoppingBag
 } from 'lucide-react'
 
@@ -27,6 +33,9 @@ export default function SupportWorkspace() {
   const [order, setOrder] = useState<any>(null)
   const [loadingOrder, setLoadingOrder] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
+  const [pendingStatus, setPendingStatus] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
+  const [showResolveConfirm, setShowResolveConfirm] = useState(false)
 
   // --- INIT ---
   useEffect(() => {
@@ -38,10 +47,11 @@ export default function SupportWorkspace() {
     const { data } = await supabase
       .from('support_tickets')
       .select('*, user:user_id(email, display_name)')
-      .neq('status', 'closed')
       .order('created_at', { ascending: false })
     
-    if (data) setTickets(data)
+    if (data) {
+      setTickets(data.filter((ticket) => normalizeTicketStatus(ticket.status) !== 'CLOSED'))
+    }
     setLoadingTickets(false)
   }
 
@@ -55,27 +65,50 @@ export default function SupportWorkspace() {
     e.preventDefault()
     if (!replyText.trim() || !selectedTicketId) return
     setSending(true)
+    setFeedback({ tone: 'info', message: 'Sending reply...' })
     
-    const { error } = await supabase.from('support_messages').insert({
-        ticket_id: selectedTicketId,
-        sender_id: (await supabase.auth.getUser()).data.user?.id,
-        is_admin_reply: true,
-        message: replyText
+    const response = await fetch('/api/admin/support/reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticketId: selectedTicketId,
+        message: replyText,
+      }),
     })
-    await supabase.from('support_tickets').update({ status: 'in_progress' }).eq('id', selectedTicketId)
 
-    if (!error) {
-        setReplyText('')
-        const { data } = await supabase.rpc('get_ticket_conversation', { p_ticket_id: selectedTicketId })
-        if (data) setConversation(data)
+    if (response.ok) {
+      setReplyText('')
+      const { data } = await supabase.rpc('get_ticket_conversation', { p_ticket_id: selectedTicketId })
+      if (data) setConversation(data)
+      setFeedback({ tone: 'success', message: 'Reply sent.' })
+    } else {
+      const errorMessage = await parseApiError(response, 'Failed to send reply.')
+      setFeedback({ tone: 'error', message: errorMessage })
     }
     setSending(false)
   }
 
+  const requestResolveTicket = () => {
+    setShowResolveConfirm(true)
+  }
+
   const closeTicket = async () => {
-    if (!confirm('Mark this ticket as resolved?')) return
-    await supabase.from('support_tickets').update({ status: 'closed' }).eq('id', selectedTicketId)
+    setShowResolveConfirm(false)
+    setFeedback({ tone: 'info', message: 'Resolving ticket...' })
+    const response = await fetch('/api/admin/support/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticketId: selectedTicketId,
+      }),
+    })
+    if (!response.ok) {
+      const errorMessage = await parseApiError(response, 'Failed to resolve ticket.')
+      setFeedback({ tone: 'error', message: errorMessage })
+      return
+    }
     setSelectedTicketId(null)
+    setFeedback({ tone: 'success', message: 'Ticket resolved.' })
     fetchTickets()
   }
 
@@ -87,154 +120,164 @@ export default function SupportWorkspace() {
     setOrder(null)
     const { data } = await supabase.rpc('get_order_details', { p_query: orderQuery.trim() })
     if (data) setOrder(data)
-    else alert('Order not found. Check UUID or Reference.')
+    else setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
     setLoadingOrder(false)
   }
 
-  const forceUpdateStatus = async (newStatus: 'COMPLETED' | 'CANCELLED') => {
+  const forceUpdateStatus = async ({
+    status,
+    reason,
+    category,
+  }: {
+    status: 'COMPLETED' | 'CANCELLED'
+    reason: string
+    category: string
+  }) => {
     if (!order) return
-    const action = newStatus === 'COMPLETED' ? 'Force Complete' : 'Force Cancel'
-    if (!confirm(`⚠️ DANGER: ${action}?`)) return
-
     setActionLoading(true)
-    const { error } = await supabase.from('orders').update({ 
-        status: newStatus,
-        refund_status: newStatus === 'CANCELLED' ? 'full' : 'none'
-    }).eq('id', order.id)
+    setFeedback({ tone: 'info', message: `Applying order status ${status}...` })
+    const response = await fetch('/api/admin/orders/force-status', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': makeIdempotencyKey('support-order-force-status'),
+      },
+      body: JSON.stringify({
+        orderId: order.id,
+        newStatus: status,
+        reasonCategory: category,
+        reason,
+      }),
+    })
 
-    if (!error) {
-        await supabase.from('admin_audit_logs').insert({
-            action_type: 'ORDER_INTERVENTION',
-            target_id: order.id,
-            details: `Support Agent forced status to ${newStatus}`
-        })
-        const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
-        setOrder(updated)
+    if (!response.ok) {
+      const errorMessage = await parseApiError(response, 'Failed to update order status.')
+      setFeedback({ tone: 'error', message: errorMessage })
+      setActionLoading(false)
+      return
     }
+
+    const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
+    setOrder(updated)
+    setPendingStatus(null)
+    setFeedback({ tone: 'success', message: `Order status updated to ${status}.` })
     setActionLoading(false)
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 h-[calc(100vh-100px)] flex flex-col">
-      
-      {/* HEADER & TABS */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-        <div>
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">Support Desk</h1>
-            <p className="text-gray-500 text-sm">Customer care and order debugging center.</p>
-        </div>
-        
-        <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 w-fit">
-            <button 
-                onClick={() => { setActiveTab('tickets'); setSelectedTicketId(null); }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition ${activeTab === 'tickets' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-                <Ticket size={16} /> Inbox <span className="bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">{tickets.length}</span>
-            </button>
-            <button 
-                onClick={() => setActiveTab('ops')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition ${activeTab === 'ops' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-                <Package size={16} /> Order Diagnostics
-            </button>
-        </div>
-      </div>
+    <div className="space-y-6 h-[calc(100vh-100px)] flex flex-col">
+      <PageHeader
+        title="Support Desk"
+        subtitle="Customer care and order debugging center."
+      />
+      {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+
+      <TabsRoot>
+        <Tab
+          active={activeTab === 'tickets'}
+          onClick={() => { setActiveTab('tickets'); setSelectedTicketId(null); }}
+        >
+          <span className="flex items-center gap-2">
+            <Ticket size={16} /> Inbox {tickets.length > 0 && <Badge tone="neutral">{tickets.length}</Badge>}
+          </span>
+        </Tab>
+        <Tab active={activeTab === 'ops'} onClick={() => setActiveTab('ops')}>
+          <span className="flex items-center gap-2"><Package size={16} /> Order Diagnostics</span>
+        </Tab>
+      </TabsRoot>
 
       {/* --- CONTENT AREA --- */}
       
-      {/* VIEW 1: TICKET INBOX */}
       {activeTab === 'tickets' && (
         !selectedTicketId ? (
-            // A. THE QUEUE
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex-1 overflow-y-auto">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 font-bold uppercase text-[10px]">
-                        <tr>
-                            <th className="px-6 py-4">Subject</th>
-                            <th className="px-6 py-4">User</th>
-                            <th className="px-6 py-4">Status</th>
-                            <th className="px-6 py-4 text-right">Action</th>
-                        </tr>
+            <Card className="flex-1 overflow-hidden flex flex-col min-h-0">
+              <CardContent className="p-0 flex-1 overflow-y-auto">
+                {loadingTickets ? (
+                  <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" /></div>
+                ) : (
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[var(--background)] border-b border-[var(--border)] text-[var(--muted)] font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="px-6 py-4">Subject</th>
+                        <th className="px-6 py-4">User</th>
+                        <th className="px-6 py-4">Status</th>
+                        <th className="px-6 py-4 text-right">Action</th>
+                      </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
-                        {tickets.map((ticket) => (
-                            <tr key={ticket.id} onClick={() => openTicket(ticket.id)} className="hover:bg-gray-50 cursor-pointer transition">
-                                <td className="px-6 py-4 font-bold text-gray-900">{ticket.subject}</td>
-                                <td className="px-6 py-4 text-gray-600">{ticket.user?.email || 'Guest'}</td>
-                                <td className="px-6 py-4"><span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-[10px] font-bold uppercase">{ticket.status}</span></td>
-                                <td className="px-6 py-4 text-right"><ArrowRight size={16} className="text-gray-400 ml-auto" /></td>
-                            </tr>
-                        ))}
-                        {tickets.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-gray-400">Zero tickets pending.</td></tr>}
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {tickets.map((ticket) => (
+                        <tr key={ticket.id} onClick={() => openTicket(ticket.id)} className="hover:bg-[var(--background)]/50 cursor-pointer transition">
+                          <td className="px-6 py-4 font-semibold text-[var(--foreground)]">{ticket.subject}</td>
+                          <td className="px-6 py-4 text-[var(--muted)]">{ticket.user?.email || 'Guest'}</td>
+                          <td className="px-6 py-4"><Badge tone={normalizeTicketStatus(ticket.status) === 'RESOLVED' ? 'success' : 'neutral'}>{normalizeTicketStatus(ticket.status)}</Badge></td>
+                          <td className="px-6 py-4 text-right"><ArrowRight size={16} className="text-[var(--muted)] ml-auto" /></td>
+                        </tr>
+                      ))}
+                      {tickets.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-[var(--muted)]">No tickets pending.</td></tr>}
                     </tbody>
-                </table>
-            </div>
+                  </table>
+                )}
+              </CardContent>
+            </Card>
         ) : (
-            // B. THE HIGH-END WORKSPACE (Chat + Compact Sidekick)
-            <div className="flex flex-1 gap-6 overflow-hidden">
-                {/* Chat */}
-                <div className="flex-1 bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
-                    <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+            <div className="flex flex-1 gap-6 overflow-hidden min-h-0">
+                <Card className="flex-1 flex flex-col overflow-hidden min-h-0">
+                    <CardHeader className="py-4 flex flex-row justify-between items-center bg-[var(--background)]">
                         <div className="flex items-center gap-3">
-                            <button onClick={() => setSelectedTicketId(null)} className="p-2 hover:bg-white rounded-lg transition"><ArrowLeft size={18} /></button>
-                            <h2 className="font-bold text-gray-900 text-sm">{conversation?.ticket.subject}</h2>
+                            <Button variant="ghost" size="sm" onClick={() => setSelectedTicketId(null)}><ArrowLeft size={18} /></Button>
+                            <h2 className="font-semibold text-[var(--foreground)] text-sm">{conversation?.ticket?.subject ?? 'Loading...'}</h2>
                         </div>
-                        <button onClick={closeTicket} className="text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 font-bold hover:bg-green-100">Mark Resolved</button>
-                    </div>
-                    <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50">
-                        {conversation?.messages.map((msg: any) => (
+                        <Button size="sm" onClick={requestResolveTicket} className="bg-emerald-600 hover:bg-emerald-700 text-white border-0">Mark Resolved</Button>
+                    </CardHeader>
+                    <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-[var(--background)]/50">
+                        {(conversation?.messages ?? []).map((msg: any) => (
                             <div key={msg.id} className={`flex flex-col ${msg.is_admin_reply ? 'items-end' : 'items-start'}`}>
-                                <div className={`max-w-[80%] rounded-2xl p-4 text-sm shadow-sm ${msg.is_admin_reply ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-none'}`}>
+                                <div className={`max-w-[80%] rounded-2xl p-4 text-sm ${msg.is_admin_reply ? 'bg-[var(--primary)] text-white rounded-br-none' : 'bg-[var(--surface)] text-[var(--foreground)] border border-[var(--border)] rounded-bl-none'}`}>
                                     {msg.message}
                                 </div>
                             </div>
                         ))}
                     </div>
-                    <form onSubmit={sendReply} className="p-4 bg-white border-t border-gray-200 flex gap-2">
-                        <input type="text" placeholder="Type reply..." className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={replyText} onChange={(e) => setReplyText(e.target.value)} />
-                        <button disabled={sending} className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200"><Send size={20} /></button>
+                    <form onSubmit={sendReply} className="p-4 border-t border-[var(--border)] flex gap-2">
+                        <Input placeholder="Type reply..." className="flex-1" value={replyText} onChange={(e) => setReplyText(e.target.value)} />
+                        <Button type="submit" disabled={sending} size="md"><Send size={18} /></Button>
                     </form>
-                </div>
-                
-                {/* Compact Sidekick */}
-                <div className="w-[350px] bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
-                    <div className="p-4 border-b border-gray-200 bg-gray-50 font-bold text-xs text-gray-500 uppercase flex items-center gap-2">
+                </Card>
+                <Card className="w-[350px] flex flex-col overflow-hidden shrink-0">
+                    <CardHeader className="py-3 bg-[var(--background)] font-bold text-xs text-[var(--muted)] uppercase flex items-center gap-2">
                         <RefreshCcw size={14} /> Diagnostic Sidekick
-                    </div>
-                    <div className="p-4 flex-1 overflow-y-auto">
-                        <form onSubmit={searchOrder} className="flex gap-2 mb-6">
-                            <input type="text" placeholder="Order Ref..." className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-purple-500" value={orderQuery} onChange={(e) => setOrderQuery(e.target.value)} />
-                            <button type="submit" className="bg-purple-600 text-white px-3 py-2 rounded-lg text-xs font-bold"><Search size={14} /></button>
+                    </CardHeader>
+                    <CardContent className="flex-1 overflow-y-auto">
+                        <form onSubmit={searchOrder} className="flex gap-2 mb-4">
+                            <Input placeholder="Order Ref..." className="flex-1 text-xs font-mono" value={orderQuery} onChange={(e) => setOrderQuery(e.target.value)} />
+                            <Button type="submit" size="sm">Search</Button>
                         </form>
-                        {order && <CompactOrderView order={order} loading={actionLoading} onForce={forceUpdateStatus} />}
-                    </div>
-                </div>
+                        {order && <CompactOrderView order={order} loading={actionLoading} onForce={(status: 'COMPLETED' | 'CANCELLED') => setPendingStatus(status)} />}
+                    </CardContent>
+                </Card>
             </div>
         )
       )}
 
-      {/* VIEW 2: FULL ORDER OPS (Standalone) */}
       {activeTab === 'ops' && (
-        <div className="flex-1 flex flex-col bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-             <div className="p-6 border-b border-gray-200 bg-gray-50 flex items-center gap-4">
+        <Card className="flex-1 flex flex-col overflow-hidden min-h-0">
+             <CardHeader className="py-4 flex items-center gap-4 bg-[var(--background)]">
                 <form onSubmit={searchOrder} className="flex gap-2 w-full max-w-lg">
-                    <input type="text" placeholder="Paste Order UUID or Paystack Reference..." className="flex-1 px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 text-sm font-mono" value={orderQuery} onChange={(e) => setOrderQuery(e.target.value)} />
-                    <button type="submit" disabled={loadingOrder} className="bg-purple-600 text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-purple-700 transition">{loadingOrder ? <Loader2 className="animate-spin h-4 w-4" /> : 'Diagnose'}</button>
+                    <Input placeholder="Order UUID or Paystack Reference..." className="flex-1 text-sm font-mono" value={orderQuery} onChange={(e) => setOrderQuery(e.target.value)} />
+                    <Button type="submit" disabled={loadingOrder} loading={loadingOrder}>Diagnose</Button>
                 </form>
-             </div>
-             <div className="flex-1 p-8 overflow-y-auto">
+             </CardHeader>
+             <CardContent className="flex-1 overflow-y-auto">
                 {order ? (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                         <div>
-                            {/* STATUS HEADER */}
                             <div className="mb-6">
-                                <span className={`text-2xl font-black ${order.status === 'COMPLETED' ? 'text-green-600' : (order.status === 'CANCELLED' ? 'text-red-600' : 'text-gray-900')}`}>{order.status}</span>
-                                <p className="text-sm text-gray-500 font-mono mt-1">Ref: {order.reference}</p>
+                                <span className={`text-2xl font-black ${order.status === 'COMPLETED' ? 'text-emerald-600' : order.status === 'CANCELLED' ? 'text-red-600' : 'text-[var(--foreground)]'}`}>{order.status}</span>
+                                <p className="text-sm text-[var(--muted)] font-mono mt-1">Ref: {order.reference}</p>
                             </div>
 
-                            {/* ITEM DETAILS (NEW) */}
                             <div className="mb-8">
-                                <h4 className="text-xs font-bold text-gray-400 uppercase mb-3 flex items-center gap-2"><ShoppingBag size={12}/> Order Items</h4>
+                                <h4 className="text-xs font-bold text-[var(--muted)] uppercase mb-3 flex items-center gap-2"><ShoppingBag size={12}/> Order Items</h4>
                                 <div className="space-y-3">
                                     {order.items?.map((item: any, i: number) => (
                                         <div key={i} className="flex items-center gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
@@ -279,25 +322,76 @@ export default function SupportWorkspace() {
                                 <div className="bg-red-50 border border-red-100 rounded-xl p-6">
                                     <h4 className="text-sm font-bold text-red-800 uppercase mb-4 flex items-center gap-2"><AlertTriangle size={16}/> Intervention Zone</h4>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <button disabled={actionLoading} onClick={() => forceUpdateStatus('COMPLETED')} className="bg-white border border-red-200 text-red-700 font-bold py-3 rounded-lg text-xs hover:bg-red-50">Force Complete</button>
-                                        <button disabled={actionLoading} onClick={() => forceUpdateStatus('CANCELLED')} className="bg-red-600 text-white font-bold py-3 rounded-lg text-xs hover:bg-red-700">Force Cancel</button>
+                                        <Button variant="secondary" disabled={actionLoading} onClick={() => setPendingStatus('COMPLETED')} className="border-red-200 text-red-700 hover:bg-red-50">Force Complete</Button>
+                                        <Button variant="danger" disabled={actionLoading} onClick={() => setPendingStatus('CANCELLED')}>Force Cancel</Button>
                                     </div>
                                 </div>
                             )}
                         </div>
                     </div>
                 ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                    <div className="h-full flex flex-col items-center justify-center text-[var(--muted)]">
                         <Package size={48} className="mb-4 opacity-20" />
                         <p>Enter an Order ID above to begin diagnostics.</p>
                     </div>
                 )}
-             </div>
-        </div>
+             </CardContent>
+        </Card>
       )}
 
+      <ConfirmActionModal
+        open={showResolveConfirm}
+        title="Mark ticket as resolved?"
+        description="This will close the ticket and remove it from your active queue."
+        impactSummary="The ticket will be marked resolved. The user can open a new ticket if they need further help."
+        confirmLabel="Mark resolved"
+        onClose={() => setShowResolveConfirm(false)}
+        onConfirm={closeTicket}
+      />
+
+      <ActionReasonModal
+        open={pendingStatus !== null}
+        title={pendingStatus === 'COMPLETED' ? 'Confirm Force Complete' : 'Confirm Force Cancel'}
+        description="Provide a structured reason for this support intervention."
+        impactSummary={
+          pendingStatus === 'COMPLETED'
+            ? 'Order will be marked complete and funds released to the seller.'
+            : 'Order will be cancelled and buyer refunded.'
+        }
+        categoryOptions={[
+          { value: 'fraud', label: 'Fraud risk' },
+          { value: 'payment_issue', label: 'Payment issue' },
+          { value: 'customer_request', label: 'Customer request' },
+          { value: 'fulfillment_issue', label: 'Fulfillment issue' },
+          { value: 'compliance', label: 'Compliance' },
+          { value: 'other', label: 'Other' },
+        ]}
+        submitting={actionLoading}
+        onClose={() => setPendingStatus(null)}
+        onSubmit={({ category, reason }) => {
+          if (!pendingStatus) return
+          return forceUpdateStatus({ status: pendingStatus, category, reason })
+        }}
+      />
     </div>
   )
+}
+
+function makeIdempotencyKey(scope: string) {
+  const randomPart =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${scope}-${randomPart}`
+}
+
+function normalizeTicketStatus(status: string): 'OPEN' | 'PENDING' | 'RESOLVED' | 'CLOSED' {
+  const upper = (status || '').toUpperCase()
+  if (upper === 'IN_PROGRESS') return 'PENDING'
+  if (upper === 'OPEN' || upper === 'PENDING' || upper === 'RESOLVED' || upper === 'CLOSED') {
+    return upper
+  }
+  return 'OPEN'
 }
 
 // --- SUB COMPONENTS ---
@@ -330,12 +424,12 @@ function CompactOrderView({ order, loading, onForce }: any) {
                 <TimelineItem icon={CheckCircle} label="Complete" date={order.status === 'COMPLETED' ? order.updated_at : null} active={order.status === 'COMPLETED'} isLast compact />
             </div>
             
-            {!isTerminal && (
-                <div className="pt-4 border-t border-gray-100 space-y-2">
-                    <button disabled={loading} onClick={() => onForce('COMPLETED')} className="w-full bg-white border border-gray-200 text-gray-700 font-bold py-2 rounded-lg text-xs hover:bg-green-50 hover:text-green-700 hover:border-green-200 transition">Force Complete</button>
-                    <button disabled={loading} onClick={() => onForce('CANCELLED')} className="w-full bg-white border border-gray-200 text-gray-700 font-bold py-2 rounded-lg text-xs hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition">Force Cancel</button>
-                </div>
-            )}
+                            {!isTerminal && (
+                                <div className="pt-4 border-t border-[var(--border)] space-y-2">
+                                    <Button variant="secondary" size="sm" className="w-full" disabled={loading} onClick={() => onForce('COMPLETED')}>Force Complete</Button>
+                                    <Button variant="danger" size="sm" className="w-full" disabled={loading} onClick={() => onForce('CANCELLED')}>Force Cancel</Button>
+                                </div>
+                            )}
         </div>
     )
 }

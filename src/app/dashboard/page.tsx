@@ -2,8 +2,21 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '../../utils/supabase/client'
-import { 
-  DollarSign, Users, ShoppingBag, ShieldAlert, Activity, Server, Database, ArrowRight, Loader2, CreditCard, Wallet, Hourglass
+import { PageHeader } from '../../components/admin/PageHeader'
+import {
+  Users,
+  ShoppingBag,
+  ShieldAlert,
+  Activity,
+  Server,
+  Database,
+  ArrowRight,
+  Loader2,
+  Wallet,
+  Hourglass,
+  BarChart3,
+  PlayCircle,
+  ExternalLink,
 } from 'lucide-react'
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
@@ -13,6 +26,7 @@ export default function DashboardOverview() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   const [role, setRole] = useState<string | null>(null)
+  const [trendWindow, setTrendWindow] = useState<'24h' | '7d' | '30d'>('7d')
   
   const [stats, setStats] = useState<any>({
     total_users: 0, 
@@ -25,6 +39,9 @@ export default function DashboardOverview() {
     pending_kyc: 0
   })
   const [chartData, setChartData] = useState<any[]>([])
+  const [interventionTrends, setInterventionTrends] = useState<
+    { actionType: string; category: string; count: number }[]
+  >([])
   const [dbLatency, setDbLatency] = useState<number | null>(null)
 
   useEffect(() => {
@@ -47,6 +64,18 @@ export default function DashboardOverview() {
         const { data: graphData } = await supabase.rpc('get_daily_revenue_chart')
         if (graphData) setChartData(graphData)
 
+        const since = getSinceISOString(trendWindow)
+        const { data: auditData } = await supabase
+          .from('admin_audit_logs')
+          .select('action_type, details, created_at')
+          .in('action_type', ['ORDER_INTERVENTION', 'DISPUTE_VERDICT', 'PAYOUT_APPROVE', 'PAYOUT_REJECT'])
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(400)
+        if (auditData) {
+          setInterventionTrends(buildInterventionTrends(auditData))
+        }
+
         // 3. Health Check
         const start = Date.now()
         await supabase.from('admin_users').select('count', { count: 'exact', head: true })
@@ -55,7 +84,7 @@ export default function DashboardOverview() {
         setLoading(false)
     }
     init()
-  }, [])
+  }, [trendWindow])
 
   const formatNaira = (amount: number) => {
     return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount)
@@ -71,15 +100,15 @@ export default function DashboardOverview() {
       
       {/* 1. Header & Health */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-            {isBoss ? 'Morning, Founder.' : 'Dashboard'}
-          </h1>
+        <div className="space-y-2">
+          <PageHeader
+            title={isBoss ? 'Morning, Founder.' : 'Dashboard'}
+            subtitle="Real-time platform overview"
+          />
           <div className="flex items-center gap-2 text-gray-500">
             <span className="capitalize px-2 py-0.5 rounded-md bg-gray-100 text-xs font-bold border border-gray-200">
-                {role?.replace('_', ' ')}
+              {role?.replace('_', ' ')}
             </span>
-            <span className="text-sm">Real-time Overview</span>
           </div>
         </div>
 
@@ -216,28 +245,104 @@ export default function DashboardOverview() {
 
         {/* Quick Access */}
         <div className={`rounded-xl border border-gray-100 bg-white p-6 shadow-sm ${!canSeeMoney ? 'md:col-span-3' : ''}`}>
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Shortcuts</h3>
-            <div className="space-y-3">
-                {['super_admin', 'moderator', 'support'].includes(role || '') && (
-                    <QuickLink href="/dashboard/moderator" icon={ShieldAlert} label="KYC Station" count={stats.pending_kyc} color="orange" />
-                )}
-                {['super_admin', 'finance'].includes(role || '') && (
-                    <QuickLink href="/dashboard/finance" icon={Activity} label="Dispute Tribunal" count={stats.active_disputes} color="red" />
-                )}
-                <QuickLink href="/dashboard/users" icon={Users} label="User Manager" count={null} color="blue" />
-            </div>
+          <h3 className="text-lg font-bold text-gray-900 mb-4">Shortcuts</h3>
+          <div className="space-y-3">
+            {['super_admin', 'moderator', 'support'].includes(role || '') && (
+              <QuickLink
+                href="/dashboard/moderator"
+                icon={ShieldAlert}
+                label="KYC Station"
+                count={stats.pending_kyc}
+                color="orange"
+              />
+            )}
+            {['super_admin', 'finance'].includes(role || '') && (
+              <QuickLink
+                href="/dashboard/finance"
+                icon={Activity}
+                label="Dispute Tribunal"
+                count={stats.active_disputes}
+                color="red"
+              />
+            )}
+            <QuickLink href="/dashboard/users" icon={Users} label="User Manager" count={null} color="blue" />
+          </div>
 
-            <div className="mt-8 rounded-lg bg-gray-50 p-4 border border-gray-200">
-                <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Infrastructure</h4>
-                <div className="mt-3 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                        <span className="text-gray-600">DB Latency</span>
-                        <span className="font-mono font-bold text-gray-900">{dbLatency || '-'}ms</span>
-                    </div>
-                </div>
+          <div className="mt-6 rounded-lg bg-gray-50 p-4 border border-gray-200 space-y-3">
+            <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quality gates</h4>
+            <p className="text-[11px] text-gray-500">
+              Run the end-to-end smoke suite before pushing risky changes.
+            </p>
+            <a
+              href="/docs/QUALITY_AND_ROLLOUT"
+              className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition"
+            >
+              <PlayCircle className="h-4 w-4 text-green-600" />
+              Run smoke tests (read how)
+              <ExternalLink className="h-3 w-3 text-gray-400" />
+            </a>
+          </div>
+
+          <div className="mt-4 rounded-lg bg-gray-50 p-4 border border-gray-200">
+            <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Infrastructure</h4>
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-600">DB Latency</span>
+                <span className="font-mono font-bold text-gray-900">{dbLatency || '-'}ms</span>
+              </div>
             </div>
+          </div>
         </div>
 
+      </div>
+
+      {/* 4. Intervention Trends */}
+      <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">Intervention Trends</h3>
+            <p className="text-xs text-gray-500">
+              {trendWindow} intervention logs grouped by category.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="rounded-full bg-indigo-50 p-2 text-indigo-600">
+              <BarChart3 size={16} />
+            </div>
+            <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+              {(['24h', '7d', '30d'] as const).map((windowOption) => (
+                <button
+                  key={windowOption}
+                  onClick={() => setTrendWindow(windowOption)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-bold transition ${
+                    trendWindow === windowOption
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  {windowOption}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {interventionTrends.length === 0 ? (
+          <p className="text-sm text-gray-400">No intervention category data available yet.</p>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {interventionTrends.map((item) => (
+              <div
+                key={`${item.actionType}-${item.category}`}
+                className="rounded-lg border border-gray-200 bg-gray-50 p-4"
+              >
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{item.actionType}</p>
+                <p className="mt-1 text-sm font-semibold text-gray-800">{item.category}</p>
+                <p className="mt-2 text-xl font-black text-gray-900">{item.count}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -262,4 +367,42 @@ function QuickLink({ href, icon: Icon, label, count, color }: any) {
              {count === null && <ArrowRight size={14} className="text-gray-400" />}
         </a>
     )
+}
+
+function buildInterventionTrends(
+  logs: { action_type: string; details: string | null; created_at: string }[]
+): { actionType: string; category: string; count: number }[] {
+  const aggregate = new Map<string, number>()
+
+  logs.forEach((log) => {
+    const actionType = log.action_type
+    const details = log.details || ''
+    const categoryMatch = details.match(/Category:\s*([a-zA-Z_]+)/)
+    const category = categoryMatch ? categoryMatch[1] : 'uncategorized'
+    const key = `${actionType}::${category}`
+    aggregate.set(key, (aggregate.get(key) || 0) + 1)
+  })
+
+  return Array.from(aggregate.entries())
+    .map(([key, count]) => {
+      const [actionType, category] = key.split('::')
+      return { actionType, category, count }
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 9)
+}
+
+function getSinceISOString(window: '24h' | '7d' | '30d') {
+  const now = new Date()
+  const since = new Date(now)
+
+  if (window === '24h') {
+    since.setHours(now.getHours() - 24)
+  } else if (window === '7d') {
+    since.setDate(now.getDate() - 7)
+  } else {
+    since.setDate(now.getDate() - 30)
+  }
+
+  return since.toISOString()
 }

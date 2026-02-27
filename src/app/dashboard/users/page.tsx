@@ -1,46 +1,66 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '../../../utils/supabase/client'
+import { PageHeader } from '../../../components/admin/PageHeader'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { EmptyState } from '../../../components/admin/EmptyState'
+import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { useTableStateFromUrl } from '../../../hooks/useTableStateFromUrl'
+import { parseApiError } from '../../../utils/http'
 import { 
-  Search, Eye, ShieldOff, Ban, UserCheck, Wallet, ShoppingCart, 
-  Loader2, Users as UsersIcon, Award, Clock, AlertTriangle, 
-  TrendingUp, CreditCard, MapPin, Calendar, Activity, CheckCircle, Copy
+  Search, Eye, ShieldOff, UserCheck, Wallet, Loader2, Users as UsersIcon, CreditCard, MapPin, Calendar, Activity, Copy, ChevronLeft, ChevronRight
 } from 'lucide-react'
+
+const PAGE_SIZE = 20
 
 export default function UserManagement() {
   const supabase = createClient()
+  const tableState = useTableStateFromUrl()
+  const { page, q, sort, order, setQ, setPage, pageSize } = tableState
   const [users, setUsers] = useState<any[]>([])
+  const [totalCount, setTotalCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  
+  const [searchInput, setSearchInput] = useState('')
+
   const [dossier, setDossier] = useState<any>(null)
   const [dossierLoading, setDossierLoading] = useState(false)
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
+  const [pendingAccountStatus, setPendingAccountStatus] = useState<'suspended' | 'active' | null>(null)
+
+  const fetchUsers = useCallback(async () => {
+    setLoading(true)
+    const from = (page - 1) * pageSize
+    const to = from + pageSize - 1
+    let query = supabase
+      .from('profiles')
+      .select('*', { count: 'exact' })
+      .order(sort, { ascending: order === 'asc' })
+      .range(from, to)
+    if (q.trim()) {
+      const term = q.trim()
+      const orParts = [`email.ilike.%${term}%`, `display_name.ilike.%${term}%`]
+      if (term.includes('-')) orParts.push(`id.eq.${term}`)
+      query = query.or(orParts.join(','))
+    }
+    const { data, count } = await query
+    if (data) setUsers(data)
+    setTotalCount(count ?? null)
+    setLoading(false)
+  }, [page, q, sort, order, pageSize])
+
+  useEffect(() => {
+    setSearchInput(q)
+  }, [q])
 
   useEffect(() => {
     fetchUsers()
-  }, [])
+  }, [fetchUsers])
 
-  const fetchUsers = async () => {
-    setLoading(true)
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20)
-    if (data) setUsers(data)
-    setLoading(false)
-  }
-
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .or(`email.ilike.%${search}%,display_name.ilike.%${search}%,id.eq.${search.includes('-') ? search : '00000000-0000-0000-0000-000000000000'}`)
-    if (data) setUsers(data)
-    setLoading(false)
+    setQ(searchInput.trim())
   }
 
   const selectUser = async (userId: string) => {
@@ -51,19 +71,33 @@ export default function UserManagement() {
     setDossierLoading(false)
   }
 
-  const toggleAccountStatus = async () => {
+  const requestAccountStatusChange = () => {
     if (!dossier) return
     const newStatus = dossier.status === 'active' ? 'suspended' : 'active'
-    if (!confirm(`Confirm: Set status to ${newStatus}?`)) return
+    setPendingAccountStatus(newStatus)
+  }
 
-    await supabase.from('profiles').update({ account_status: newStatus }).eq('id', dossier.id)
-    await supabase.from('admin_audit_logs').insert({
-        action_type: 'USER_STATUS_CHANGE',
-        target_id: dossier.id,
-        details: `Changed status to ${newStatus}`
+  const submitAccountStatusChange = async (payload: { category: string; reason: string }) => {
+    if (!dossier || !pendingAccountStatus) return
+    const response = await fetch('/api/admin/users/account-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: dossier.id,
+        accountStatus: pendingAccountStatus,
+        reason: payload.reason.trim(),
+      }),
     })
-    setDossier({...dossier, status: newStatus})
-    fetchUsers()
+    if (!response.ok) {
+      const errorMessage = await parseApiError(response, 'Failed to update account status.')
+      setFeedback({ tone: 'error', message: errorMessage })
+      setPendingAccountStatus(null)
+      return
+    }
+    setDossier({ ...dossier, status: pendingAccountStatus })
+    setFeedback({ tone: 'success', message: `Account status updated to ${pendingAccountStatus}.` })
+    setPendingAccountStatus(null)
+    void fetchUsers()
   }
 
   const copyToClipboard = (text: string) => {
@@ -76,18 +110,65 @@ export default function UserManagement() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
+      <PageHeader
+        title="User Intelligence"
+        subtitle="Deep dive into user behavior, financials, and risk."
+      />
+      {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+
+      <ActionReasonModal
+        open={pendingAccountStatus !== null}
+        title={pendingAccountStatus === 'suspended' ? 'Freeze this account?' : 'Activate this account?'}
+        description={
+          pendingAccountStatus === 'suspended'
+            ? 'The user will lose access to the platform until the account is reactivated.'
+            : 'The user will regain full access to the platform.'
+        }
+        impactSummary={
+          pendingAccountStatus === 'suspended'
+            ? 'User will be logged out and cannot sign in until an admin reactivates the account.'
+            : 'User can sign in and use the app again.'
+        }
+        categoryOptions={[
+          { value: 'abuse', label: 'Abuse / harassment' },
+          { value: 'fraud', label: 'Fraud / scam' },
+          { value: 'policy', label: 'Policy violation' },
+          { value: 'request', label: 'User request' },
+          { value: 'other', label: 'Other' },
+        ]}
+        onClose={() => setPendingAccountStatus(null)}
+        onSubmit={submitAccountStatusChange}
+      />
+
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">User Intelligence</h1>
-            <p className="text-gray-500 text-sm">Deep dive into user behavior, financials, and risk.</p>
-        </div>
         <form onSubmit={handleSearch} className="flex gap-2 w-full md:w-96">
             <div className="relative flex-1">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                <input type="text" placeholder="Search name, email, UUID..." className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <input type="text" placeholder="Search name, email, UUID..." className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
             </div>
             <button type="submit" className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-black transition">Search</button>
         </form>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <label className="flex items-center gap-1.5 text-gray-500">
+            Sort
+            <select value={`${sort}:${order}`} onChange={(e) => { const [s, o] = e.target.value.split(':'); tableState.setSort(s); tableState.setOrder(o as 'asc' | 'desc'); }} className="rounded border border-gray-200 bg-white px-2 py-1 text-gray-700">
+              <option value="created_at:desc">Newest first</option>
+              <option value="created_at:asc">Oldest first</option>
+              <option value="display_name:asc">Name A–Z</option>
+              <option value="display_name:desc">Name Z–A</option>
+              <option value="email:asc">Email A–Z</option>
+              <option value="email:desc">Email Z–A</option>
+            </select>
+          </label>
+          {totalCount != null && (
+            <span className="text-gray-500">{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalCount)} of {totalCount}</span>
+          )}
+          <div className="flex items-center gap-1">
+            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)} className="p-1.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none"><ChevronLeft className="h-4 w-4" /></button>
+            <span className="font-medium text-gray-700 min-w-[4rem] text-center">Page {page}</span>
+            <button type="button" disabled={loading || (totalCount != null && page * pageSize >= totalCount)} onClick={() => setPage(page + 1)} className="p-1.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none"><ChevronRight className="h-4 w-4" /></button>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -122,9 +203,10 @@ export default function UserManagement() {
                                 </span>
                             </td>
                             <td className="px-6 py-4">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${user.account_status === 'active' ? 'bg-green-50 text-green-700 border-green-100' : 'bg-red-50 text-red-700 border-red-100'}`}>
-                                    {user.account_status}
-                                </span>
+                                <StatusBadge
+                                  label={user.account_status}
+                                  tone={user.account_status === 'active' ? 'success' : 'danger'}
+                                />
                             </td>
                             <td className="px-6 py-4 text-right"><Eye size={14} className="text-gray-400 ml-auto" /></td>
                         </tr>
@@ -219,7 +301,8 @@ export default function UserManagement() {
                         {/* Actions */}
                         <div className="pt-4">
                             <button 
-                                onClick={toggleAccountStatus}
+                                type="button"
+                                onClick={requestAccountStatusChange}
                                 className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm ${dossier.status === 'active' ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-600 text-white hover:bg-green-700'}`}
                             >
                                 {dossier.status === 'active' ? <><ShieldOff size={16} /> Freeze Account</> : <><UserCheck size={16} /> Activate Account</>}
@@ -228,9 +311,8 @@ export default function UserManagement() {
                     </div>
                 </div>
             ) : (
-                <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl h-[80vh] flex flex-col items-center justify-center text-gray-400 text-center p-8">
-                    <UsersIcon size={48} className="mb-4 opacity-20" />
-                    <p className="font-medium text-sm">Select a user to view full intelligence dossier.</p>
+                <div className="h-[80vh]">
+                  <EmptyState icon={UsersIcon} message="Select a user to view full intelligence dossier." />
                 </div>
             )}
         </div>

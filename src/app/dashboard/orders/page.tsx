@@ -2,9 +2,14 @@
 
 import { useState } from 'react'
 import { createClient } from '../../../utils/supabase/client'
+import { PageHeader } from '../../../components/admin/PageHeader'
+import { EmptyState } from '../../../components/admin/EmptyState'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { parseApiError } from '../../../utils/http'
 import { 
   Search, Package, Truck, CheckCircle, XCircle, AlertTriangle, 
-  MapPin, User, ArrowRight, Loader2, RefreshCcw
+  MapPin, User, Loader2, RefreshCcw
 } from 'lucide-react'
 
 export default function OrderOps() {
@@ -13,6 +18,8 @@ export default function OrderOps() {
   const [order, setOrder] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
+  const [pendingStatus, setPendingStatus] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   const searchOrder = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -23,41 +30,48 @@ export default function OrderOps() {
     const { data, error } = await supabase.rpc('get_order_details', { p_query: query.trim() })
     
     if (data) setOrder(data)
-    else if (!data) alert('Order not found. Check UUID or Reference.')
+    else if (!data) setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
     
     setLoading(false)
   }
 
-  const forceUpdateStatus = async (newStatus: 'COMPLETED' | 'CANCELLED') => {
-    const action = newStatus === 'COMPLETED' ? 'Force Complete (Release Funds)' : 'Force Cancel (Refund Buyer)'
-    if (!confirm(`⚠️ DANGER: You are about to ${action}.\n\nThis overrides all checks. Are you sure?`)) return
-
+  const forceUpdateStatus = async ({
+    status,
+    reason,
+    category,
+  }: {
+    status: 'COMPLETED' | 'CANCELLED'
+    reason: string
+    category: string
+  }) => {
     setActionLoading(true)
+    setFeedback({ tone: 'info', message: `Applying order status ${status}...` })
     
-    // 1. Update Order
-    const { error } = await supabase
-      .from('orders')
-      .update({ 
-        status: newStatus,
-        // If cancelling, mark for full refund logic
-        refund_status: newStatus === 'CANCELLED' ? 'full' : 'none'
-      })
-      .eq('id', order.id)
+    const response = await fetch('/api/admin/orders/force-status', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': makeIdempotencyKey('order-force-status'),
+      },
+      body: JSON.stringify({
+        orderId: order.id,
+        newStatus: status,
+        reasonCategory: category,
+        reason,
+      }),
+    })
 
-    if (!error) {
-        // 2. Audit Log
-        const { data: { user } } = await supabase.auth.getUser()
-        await supabase.from('admin_audit_logs').insert({
-            admin_id: user?.id,
-            action_type: 'ORDER_INTERVENTION',
-            target_id: order.id,
-            details: `Forced status to ${newStatus}`
-        })
-        
-        // Refresh
-        const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
-        setOrder(updated)
+    if (!response.ok) {
+      const errorMessage = await parseApiError(response, 'Failed to update order status.')
+      setFeedback({ tone: 'error', message: errorMessage })
+      setActionLoading(false)
+      return
     }
+
+    const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
+    setOrder(updated)
+    setPendingStatus(null)
+    setFeedback({ tone: 'success', message: `Order status updated to ${status}.` })
     setActionLoading(false)
   }
 
@@ -65,11 +79,12 @@ export default function OrderOps() {
     <div className="space-y-6 animate-in fade-in duration-500">
       
       {/* Header & Search */}
+      <PageHeader
+        title="Transaction Ops"
+        subtitle="Debug orders and intervene in stuck transactions."
+      />
+      {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">Transaction Ops</h1>
-            <p className="text-gray-500 text-sm">Debug orders and intervene in stuck transactions.</p>
-        </div>
         <form onSubmit={searchOrder} className="flex gap-2 w-full md:w-96">
             <div className="relative flex-1">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
@@ -199,7 +214,7 @@ export default function OrderOps() {
                     <div className="space-y-2">
                         <button 
                             disabled={actionLoading}
-                            onClick={() => forceUpdateStatus('COMPLETED')}
+                            onClick={() => setPendingStatus('COMPLETED')}
                             className="w-full bg-white border border-red-200 text-red-700 font-bold py-2 rounded text-xs hover:bg-red-100 transition flex items-center justify-center gap-2"
                         >
                             {actionLoading ? <Loader2 size={14} className="animate-spin"/> : <RefreshCcw size={14}/>}
@@ -207,7 +222,7 @@ export default function OrderOps() {
                         </button>
                         <button 
                             disabled={actionLoading}
-                            onClick={() => forceUpdateStatus('CANCELLED')}
+                            onClick={() => setPendingStatus('CANCELLED')}
                             className="w-full bg-red-600 text-white font-bold py-2 rounded text-xs hover:bg-red-700 transition flex items-center justify-center gap-2"
                         >
                             {actionLoading ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
@@ -219,13 +234,42 @@ export default function OrderOps() {
             </div>
         </div>
       ) : (
-        <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl h-96 flex flex-col items-center justify-center text-gray-400 text-center p-8">
-            <Search size={48} className="mb-4 opacity-20" />
-            <p className="font-medium text-sm">Enter an Order ID or Reference to begin diagnostics.</p>
-        </div>
+        <EmptyState icon={Search} message="Enter an Order ID or Reference to begin diagnostics." />
       )}
+      <ActionReasonModal
+        open={pendingStatus !== null}
+        title={pendingStatus === 'COMPLETED' ? 'Confirm Force Complete' : 'Confirm Force Cancel'}
+        description="Provide a structured reason for this privileged intervention."
+        impactSummary={
+          pendingStatus === 'COMPLETED'
+            ? 'Order will be marked complete and funds released to the seller.'
+            : 'Order will be cancelled and buyer refunded. This cannot be undone.'
+        }
+        categoryOptions={[
+          { value: 'fraud', label: 'Fraud risk' },
+          { value: 'payment_issue', label: 'Payment issue' },
+          { value: 'customer_request', label: 'Customer request' },
+          { value: 'fulfillment_issue', label: 'Fulfillment issue' },
+          { value: 'compliance', label: 'Compliance' },
+          { value: 'other', label: 'Other' },
+        ]}
+        submitting={actionLoading}
+        onClose={() => setPendingStatus(null)}
+        onSubmit={({ category, reason }) => {
+          if (!pendingStatus) return
+          return forceUpdateStatus({ status: pendingStatus, category, reason })
+        }}
+      />
     </div>
   )
+}
+
+function makeIdempotencyKey(scope: string) {
+  const randomPart =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${scope}-${randomPart}`
 }
 
 function TimelineItem({ icon: Icon, label, date, active, isLast }: any) {

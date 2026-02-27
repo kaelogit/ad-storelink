@@ -30,9 +30,16 @@ export async function middleware(request: NextRequest) {
   // 2. Check Authentication (Are they logged in?)
   const { data: { user } } = await supabase.auth.getUser()
 
+  const path = request.nextUrl.pathname
+
   // Case A: Not logged in -> Kick to Login
   if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
     return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  // Already logged in users should not see login page.
+  if (user && path === '/login') {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   // Case B: Logged in -> Check their Rank
@@ -41,7 +48,7 @@ export async function middleware(request: NextRequest) {
     // Fetch the specific Admin User data to get their Role
     const { data: adminUser, error } = await supabase
       .from('admin_users')
-      .select('role')
+      .select('role, is_active')
       .eq('id', user.id)
       .single()
 
@@ -52,8 +59,11 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/unauthorized', request.url))
     }
 
+    if (!adminUser.is_active) {
+      return NextResponse.redirect(new URL('/unauthorized', request.url))
+    }
+
     const role = adminUser.role;
-    const path = request.nextUrl.pathname;
 
     // 4. Role-Based Access Control (RBAC) - The "VIP Areas"
     // We strictly define who is allowed where.
@@ -66,25 +76,34 @@ export async function middleware(request: NextRequest) {
 
     // 💸 Finance Area (Money & Disputes)
     // Only Finance Team OR Super Admin
-    if (path.startsWith('/dashboard/finance') && !['super_admin', 'finance'].includes(role)) {
+    if (path.startsWith('/dashboard/finance') && !['super_admin', 'finance', 'analyst'].includes(role)) {
        return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
     }
 
     // 🛡️ Moderator Area (KYC, Reports, Users)
     // Only Moderators OR Super Admin
-    if (path.startsWith('/dashboard/moderator') && !['super_admin', 'moderator'].includes(role)) {
+    if (path.startsWith('/dashboard/moderator') && !['super_admin', 'moderator', 'analyst'].includes(role)) {
        return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
     }
 
     // 🎧 Support Area (Tickets, Order Lookup)
     // Support Team, Moderators, OR Super Admin
-    if (path.startsWith('/dashboard/support') && !['super_admin', 'support', 'moderator'].includes(role)) {
+    if (path.startsWith('/dashboard/support') && !['super_admin', 'support', 'moderator', 'analyst'].includes(role)) {
        return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
     }
 
     // 🎨 Content Area (Blogs, Broadcasts)
-    // Content Team OR Super Admin
-    if (path.startsWith('/dashboard/content') && !['super_admin', 'content'].includes(role)) {
+    if (path.startsWith('/dashboard/content') && !['super_admin', 'content', 'analyst'].includes(role)) {
+       return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
+    }
+
+    // 👥 Users (list + dossier)
+    if (path.startsWith('/dashboard/users') && !['super_admin', 'moderator', 'analyst'].includes(role)) {
+       return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
+    }
+
+    // 📊 Audit Log & Observability
+    if ((path.startsWith('/dashboard/audit') || path.startsWith('/dashboard/observability')) && !['super_admin', 'analyst'].includes(role)) {
        return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
     }
   }
