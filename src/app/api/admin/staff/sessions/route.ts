@@ -13,6 +13,11 @@ export async function GET() {
     .order('last_activity', { ascending: false })
 
   if (sessionsError) {
+    // Table may not exist yet if migration not run; return empty so Super Admin page doesn't crash
+    const msg = sessionsError.message ?? ''
+    if (msg.includes('admin_sessions') || msg.includes('schema cache') || msg.includes('does not exist')) {
+      return NextResponse.json({ sessions: [] })
+    }
     return NextResponse.json({ error: sessionsError.message }, { status: 400 })
   }
 

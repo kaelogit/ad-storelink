@@ -8,6 +8,11 @@ const endpoints: Array<{ method: 'post' | 'delete'; path: string; body: Record<s
   },
   {
     method: 'post',
+    path: '/api/admin/bookings/force-status',
+    body: { serviceOrderId: '00000000-0000-0000-0000-000000000000', newStatus: 'cancelled', reasonCategory: 'other', reason: 'test reason 1234' },
+  },
+  {
+    method: 'post',
     path: '/api/admin/disputes/verdict',
     body: {
       disputeId: 'test',

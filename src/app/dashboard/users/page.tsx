@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '../../../utils/supabase/client'
+import { useCountryFilter } from '../../../contexts/CountryFilterContext'
+import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
 import { EmptyState } from '../../../components/admin/EmptyState'
@@ -17,6 +19,7 @@ const PAGE_SIZE = 20
 
 export default function UserManagement() {
   const supabase = createClient()
+  const { countryCode } = useCountryFilter()
   const tableState = useTableStateFromUrl()
   const { page, q, sort, order, setQ, setPage, pageSize } = tableState
   const [users, setUsers] = useState<any[]>([])
@@ -38,6 +41,9 @@ export default function UserManagement() {
       .select('*', { count: 'exact' })
       .order(sort, { ascending: order === 'asc' })
       .range(from, to)
+    if (countryCode && countryCode !== ALL_COUNTRIES_CODE) {
+      query = query.eq('location_country_code', countryCode)
+    }
     if (q.trim()) {
       const term = q.trim()
       const orParts = [`email.ilike.%${term}%`, `display_name.ilike.%${term}%`]
@@ -48,7 +54,7 @@ export default function UserManagement() {
     if (data) setUsers(data)
     setTotalCount(count ?? null)
     setLoading(false)
-  }, [page, q, sort, order, pageSize])
+  }, [page, q, sort, order, pageSize, countryCode])
 
   useEffect(() => {
     setSearchInput(q)

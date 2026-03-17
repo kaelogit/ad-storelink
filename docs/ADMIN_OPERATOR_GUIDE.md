@@ -227,3 +227,34 @@ This guide explains how each admin role should use the new panel day‑to‑day.
   - Safety / abuse → involve **Moderator** and **Super Admin**.
   - Platform outages → involve **Engineering** and check **Observability**.
 
+---
+
+## 9. App features → Admin control (full control map)
+
+Use this to find where to control or inspect everything that exists in the app.
+
+| App feature | Where in admin | What you can do |
+|-------------|----------------|------------------|
+| **Orders** | **Transaction Ops** (Orders) | Search by UUID or Paystack ref; view status, chat, fulfillment. **Mark as paid** when Paystack callback failed; **Force status** (COMPLETED/CANCELLED) with reason. |
+| **Payments / Escrow** | **Finance** (Overview + Disputes) | View escrow balance, GMV, revenue. Resolve disputes (refund / release). |
+| **Payouts** | **Finance** → Withdrawal Watchtower | Approve or reject seller payouts; see pending/paid/failed. |
+| **Support tickets** | **Support** | List tickets, open thread, **reply** as support, **resolve** or close. Search by order UUID or Paystack ref in ticket context. |
+| **Merchant verification (KYC)** | **Moderation** | Queue of verification requests; **approve** or **reject**; syncs to profile so seller can post. |
+| **Users** | **Users** | Search by email/slug; open **dossier**: profile, status, verification, subscription, orders count, **curations count**, disputes, support tickets. Suspend/activate/ban (role-dependent). |
+| **Broadcasts & Banners** | **Content** | Send push broadcasts (segment: All/Sellers/Buyers). Create/remove in‑app banners. |
+| **Observability (errors)** | **Observability** | Recent app/admin events (info/warn/error/critical). Edge functions (e.g. paystack-webhook, cart-nudge) log failures here; use when debugging “something broke” or after function/cron failures. |
+| **Audit** | **Audit** | All admin actions (orders, payouts, support, verification, settings, staff). Filter and export. |
+| **Settings** | **Settings** (or Super Admin → System) | Maintenance mode, min app version (force update), **support phone**. |
+| **Staff & roles** | **Super Admin** | Invite staff (moderator, finance, support, content); suspend/activate; sessions and revoke. |
+
+**App features with no dedicated admin tab (use Users or existing pages):**
+
+- **Curation hubs** — Visible in User dossier (curations count). Content moderation is via Users + Content if you need to act on specific curations.
+- **Reels / Stories** — Product and profile content; use **Users** → dossier and **Content** (broadcasts/banners) for app-wide levers. Moderation of individual reels/stories via user context.
+- **Wishlist / Likes** — User-owned data; no admin action needed unless part of a user investigation (dossier).
+- **Loyalty / Store Coins** — Reflected in orders and coin_transactions; Finance and Orders give the money view. No separate “coins admin” page; use Users for balance context if needed.
+- **Blocked users** — User-level setting; view in User dossier if needed for support/safety.
+- **Follow-stores onboarding** — Onboarding flow only; no admin toggle (controlled by app/feature flags if you add them later).
+
+For **Paystack callback failures**: use **Transaction Ops** → search order → **Mark as paid (Paystack reference)**. See repo doc `store-link-mobile/docs/PAYSTACK_CALLBACK_FAILURE.md`.
+

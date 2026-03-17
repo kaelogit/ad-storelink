@@ -19,6 +19,8 @@ export default function OrderOps() {
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [pendingStatus, setPendingStatus] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
+  const [markPaidRef, setMarkPaidRef] = useState('')
+  const [markPaidLoading, setMarkPaidLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   const searchOrder = async (e: React.FormEvent) => {
@@ -33,6 +35,29 @@ export default function OrderOps() {
     else if (!data) setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
     
     setLoading(false)
+  }
+
+  const markOrderPaidByReference = async () => {
+    const ref = markPaidRef?.trim()
+    if (!ref || !order) return
+    setMarkPaidLoading(true)
+    setFeedback({ tone: 'info', message: 'Marking order as paid...' })
+    const response = await fetch('/api/admin/orders/mark-paid', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: order.id, paymentReference: ref }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      setFeedback({ tone: 'error', message: (err as any).error || 'Failed to mark as paid.' })
+      setMarkPaidLoading(false)
+      return
+    }
+    const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
+    setOrder(updated)
+    setMarkPaidRef('')
+    setFeedback({ tone: 'success', message: 'Order marked as PAID. Chat notification added if applicable.' })
+    setMarkPaidLoading(false)
   }
 
   const forceUpdateStatus = async ({
@@ -202,6 +227,34 @@ export default function OrderOps() {
                         </div>
                     </div>
                 </div>
+
+                {/* Paystack reconciliation (when webhook/callback failed) */}
+                {order.status === 'AWAITING_PAYMENT' && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-amber-800 uppercase mb-2">Mark as paid (Paystack reference)</h4>
+                    <p className="text-[10px] text-amber-700 mb-3">
+                      Use when the customer paid but callback/webhook failed. Enter the Paystack transaction reference.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. T1234567890"
+                        className="flex-1 px-3 py-2 border border-amber-200 rounded-lg text-sm font-mono"
+                        value={markPaidRef}
+                        onChange={(e) => setMarkPaidRef(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        disabled={!markPaidRef.trim() || markPaidLoading}
+                        onClick={markOrderPaidByReference}
+                        className="bg-amber-600 text-white font-bold px-3 py-2 rounded-lg text-xs hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {markPaidLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                        Mark paid
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* INTERVENTION ZONE (Danger) */}
                 <div className="bg-red-50 border border-red-100 rounded-xl p-4">

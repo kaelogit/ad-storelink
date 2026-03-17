@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '../../utils/supabase/client'
+import { useCountryFilter } from '../../contexts/CountryFilterContext'
 import { PageHeader } from '../../components/admin/PageHeader'
 import {
   Users,
@@ -17,6 +18,7 @@ import {
   BarChart3,
   PlayCircle,
   ExternalLink,
+  Package,
 } from 'lucide-react'
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
@@ -24,6 +26,7 @@ import {
 
 export default function DashboardOverview() {
   const supabase = createClient()
+  const { countryCode, rpcCountryCode, isGlobalView } = useCountryFilter()
   const [loading, setLoading] = useState(true)
   const [role, setRole] = useState<string | null>(null)
   const [trendWindow, setTrendWindow] = useState<'24h' | '7d' | '30d'>('7d')
@@ -57,12 +60,21 @@ export default function DashboardOverview() {
             setRole(adminUser?.role || null)
         }
 
-        // 2. Fetch Stats & Chart
-        const { data: statsData } = await supabase.rpc('get_admin_dashboard_stats')
+        // 2. Fetch Stats & Chart (filtered by country; null = all countries)
+        const { data: statsData } = await supabase.rpc('get_admin_dashboard_stats', {
+          p_country_code: rpcCountryCode,
+        })
         if (statsData) setStats(statsData)
 
-        const { data: graphData } = await supabase.rpc('get_daily_revenue_chart')
-        if (graphData) setChartData(graphData)
+        // Revenue chart: only fetch when a specific country is selected (avoids mixed-currency trap)
+        if (!isGlobalView) {
+          const { data: graphData } = await supabase.rpc('get_daily_revenue_chart', {
+            p_country_code: rpcCountryCode,
+          })
+          if (graphData) setChartData(graphData)
+        } else {
+          setChartData([])
+        }
 
         const since = getSinceISOString(trendWindow)
         const { data: auditData } = await supabase
@@ -84,7 +96,7 @@ export default function DashboardOverview() {
         setLoading(false)
     }
     init()
-  }, [trendWindow])
+  }, [trendWindow, countryCode, rpcCountryCode, isGlobalView])
 
   const formatNaira = (amount: number) => {
     return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount)
@@ -125,10 +137,19 @@ export default function DashboardOverview() {
       </div>
 
       {/* 2. Command Center Grid (5 Cards) */}
+      {/* When "All Countries" selected: hide GMV/Revenue/Escrow (mixed-currency trap) */}
+      {isGlobalView && canSeeMoney && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">
+          <p className="text-sm font-semibold">Select a country to view financial metrics</p>
+          <p className="text-xs text-amber-700 mt-1">
+            GMV and revenue cannot be summed across currencies (NGN + GHS + RWF, etc.). Choose a country from the dropdown above.
+          </p>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         
-        {/* PROFIT (Protected) */}
-        {canSeeMoney && (
+        {/* PROFIT (Protected) - hidden when All Countries */}
+        {canSeeMoney && !isGlobalView && (
             <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Net Profit</h3>
@@ -142,7 +163,7 @@ export default function DashboardOverview() {
                             <span className="font-semibold text-blue-600">{formatNaira(stats.revenue_subscriptions)}</span>
                         </div>
                         <div className="flex items-center justify-between text-[10px]">
-                            <span className="text-gray-500">Commisions</span>
+                            <span className="text-gray-500">Commissions</span>
                             <span className="font-semibold text-orange-600">{formatNaira(stats.revenue_transactions)}</span>
                         </div>
                     </div>
@@ -150,8 +171,8 @@ export default function DashboardOverview() {
             </div>
         )}
 
-        {/* PENDING ESCROW (In-Flight) */}
-        {canSeeMoney && (
+        {/* PENDING ESCROW (In-Flight) - hidden when All Countries */}
+        {canSeeMoney && !isGlobalView && (
             <div className="rounded-xl border border-yellow-100 bg-yellow-50/30 p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-[10px] font-bold uppercase text-yellow-600 tracking-wider">In Escrow</h3>
@@ -164,8 +185,8 @@ export default function DashboardOverview() {
             </div>
         )}
 
-        {/* GMV (Protected) */}
-        {canSeeMoney && (
+        {/* GMV (Protected) - hidden when All Countries */}
+        {canSeeMoney && !isGlobalView && (
             <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Total GMV</h3>
@@ -212,13 +233,13 @@ export default function DashboardOverview() {
       {/* 3. The Visual Data & Access */}
       <div className="grid gap-6 md:grid-cols-3">
         
-        {/* Trend Chart */}
-        {canSeeMoney && (
+        {/* Trend Chart - hidden when All Countries (mixed-currency) */}
+        {canSeeMoney && !isGlobalView && (
             <div className="md:col-span-2 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
                 <div className="mb-6 flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-gray-900">Profit Realization</h3>
-                        <p className="text-xs text-gray-500">Realized 2% Commisions (Last 7 Days)</p>
+                        <p className="text-xs text-gray-500">Realized 2% Commissions (Last 7 Days)</p>
                     </div>
                     {chartData.length === 0 && <span className="text-[10px] bg-gray-100 px-2 py-1 rounded text-gray-500">Awaiting Data</span>}
                 </div>
@@ -265,7 +286,13 @@ export default function DashboardOverview() {
                 color="red"
               />
             )}
+            {['super_admin', 'finance', 'support'].includes(role || '') && (
+              <QuickLink href="/dashboard/orders" icon={Package} label="Transaction Ops" count={null} color="blue" />
+            )}
             <QuickLink href="/dashboard/users" icon={Users} label="User Manager" count={null} color="blue" />
+            {role === 'super_admin' && (
+              <QuickLink href="/dashboard/observability" icon={Activity} label="Observability (errors)" count={null} color="blue" />
+            )}
           </div>
 
           <div className="mt-6 rounded-lg bg-gray-50 p-4 border border-gray-200 space-y-3">

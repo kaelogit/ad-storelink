@@ -31,7 +31,16 @@ export default function LoginPage() {
       return
     }
 
-    // 2. Success! Redirect to Dashboard
+    // 2. Record login for Staff/Sessions (last_login, admin_sessions); don't block redirect
+    fetch('/api/admin/record-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_info: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+      }),
+    }).catch(() => {})
+
+    // 3. Redirect to Dashboard
     router.push('/dashboard')
     router.refresh()
   }

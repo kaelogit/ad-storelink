@@ -16,11 +16,17 @@ import {
   Loader2,
   Lock,
   History,
-  Activity
+  Activity,
+  Package,
+  Globe,
+  CalendarCheck,
+  List
 } from 'lucide-react'
 import { createClient } from '../../utils/supabase/client'
 import type { AdminRole } from '../../types/admin'
 import { CommandPalette } from '../../components/admin/CommandPalette'
+import { CountryFilterProvider, useCountryFilter } from '../../contexts/CountryFilterContext'
+import { SUPPORTED_COUNTRIES } from '../../constants/SupportedCountries'
 
 // 1. Define the Menu with Permissions (analyst = read-only access where listed)
 const navigation = [
@@ -30,6 +36,9 @@ const navigation = [
   { name: 'Users', href: '/dashboard/users', icon: Users, allowedRoles: ['super_admin', 'moderator', 'analyst'] },
   { name: 'Moderation', href: '/dashboard/moderator', icon: ShieldAlert, allowedRoles: ['super_admin', 'moderator', 'analyst'] },
   { name: 'Finance', href: '/dashboard/finance', icon: Wallet, allowedRoles: ['super_admin', 'finance', 'analyst'] },
+  { name: 'Transaction Ops', href: '/dashboard/orders', icon: Package, allowedRoles: ['super_admin', 'finance', 'support'] },
+  { name: 'Bookings', href: '/dashboard/bookings', icon: CalendarCheck, allowedRoles: ['super_admin', 'finance', 'support'] },
+  { name: 'Service Listings', href: '/dashboard/service-listings', icon: List, allowedRoles: ['super_admin', 'finance', 'support', 'analyst'] },
   { name: 'Support', href: '/dashboard/support', icon: Headphones, allowedRoles: ['super_admin', 'support', 'moderator', 'analyst'] },
   { name: 'Content', href: '/dashboard/content', icon: PenTool, allowedRoles: ['super_admin', 'content', 'analyst'] },
   { name: 'Audit Log', href: '/dashboard/audit', icon: History, allowedRoles: ['super_admin', 'analyst'] },
@@ -105,7 +114,7 @@ export default function DashboardLayout({
   const commandPaletteItems = visibleNavigation.map((item) => ({ name: item.name, href: item.href }))
 
   return (
-    <>
+    <CountryFilterProvider>
       <CommandPalette items={commandPaletteItems} />
       <div className="flex h-screen bg-gray-50">
       {/* SIDEBAR */}
@@ -186,11 +195,7 @@ export default function DashboardLayout({
       {/* MAIN CONTENT AREA */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6">
-            <h2 className="text-lg font-semibold text-gray-800">
-                {currentNav?.name || 'Dashboard'}
-            </h2>
-        </header>
+        <DashboardHeader currentNav={currentNav} />
 
         {/* The Page Content */}
         <main className="flex-1 overflow-y-auto bg-gray-50 p-6">
@@ -198,6 +203,32 @@ export default function DashboardLayout({
         </main>
       </div>
     </div>
-    </>
+    </CountryFilterProvider>
+  )
+}
+
+function DashboardHeader({ currentNav }: { currentNav: (typeof navigation)[0] | undefined }) {
+  const { countryCode, setCountryCode } = useCountryFilter()
+  return (
+    <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6">
+      <h2 className="text-lg font-semibold text-gray-800">
+        {currentNav?.name || 'Dashboard'}
+      </h2>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium text-gray-500">Country</span>
+        <Globe className="h-4 w-4 text-gray-400" />
+        <select
+          value={countryCode}
+          onChange={(e) => setCountryCode(e.target.value)}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          {SUPPORTED_COUNTRIES.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.flag} {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+    </header>
   )
 }
