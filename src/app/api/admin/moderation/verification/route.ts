@@ -53,7 +53,13 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'KYC_VERIFICATION',
     target_id: profileId,
-    details: `Merchant ${decision === 'verified' ? 'Approved' : 'Rejected'}. Request ID: ${requestId}`,
+    // `admin_audit_logs.details` is `jsonb`, so we must insert an object (not a plain string).
+    details: {
+      message: `Merchant ${decision === 'verified' ? 'Approved' : 'Rejected'}.`,
+      requestId,
+      profileId,
+      decision,
+    },
   })
 
   return NextResponse.json({ ok: true })
