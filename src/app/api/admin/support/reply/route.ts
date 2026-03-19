@@ -46,7 +46,10 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'SUPPORT_REPLY',
     target_id: ticketId,
-    details: 'Sent support ticket reply and moved ticket to PENDING.',
+    details: {
+      message: 'Sent support ticket reply and moved ticket to PENDING.',
+      ticketId,
+    },
   })
 
   return NextResponse.json({ ok: true })

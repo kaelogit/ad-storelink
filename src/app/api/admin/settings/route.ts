@@ -42,7 +42,13 @@ export async function POST(request: Request) {
     admin_id: auth.userId,
     admin_email: auth.email,
     action_type: 'SYSTEM_CONFIG_CHANGE',
-    details: `Updated config. Maintenance: ${body.maintenance_mode}`,
+    details: {
+      message: 'Updated system config.',
+      maintenance_mode: body.maintenance_mode,
+      min_version_ios: body.min_version_ios,
+      min_version_android: body.min_version_android,
+      support_phone: body.support_phone,
+    },
   })
 
   return NextResponse.json({ ok: true })

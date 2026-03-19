@@ -119,7 +119,17 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'DISPUTE_VERDICT',
     target_id: disputeId,
-    details: `Verdict ${currentDisputeStatus} -> ${verdict}. Order updated to ${newOrderStatus}. Category: ${reasonCategory}. Reason: ${reason}. idem:${idempotencyKey}`,
+    details: {
+      message: 'Dispute verdict applied.',
+      disputeId,
+      orderId,
+      from: currentDisputeStatus,
+      verdict,
+      newOrderStatus,
+      reasonCategory,
+      reason,
+      idempotencyKey,
+    },
   })
 
   return NextResponse.json({ ok: true })

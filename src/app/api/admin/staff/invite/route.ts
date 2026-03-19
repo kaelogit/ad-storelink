@@ -57,7 +57,12 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'STAFF_INVITE',
     target_id: userId,
-    details: `Granted ${role} admin role to ${email}.`,
+    details: {
+      message: 'Granted admin role.',
+      userId,
+      email,
+      role,
+    },
   })
 
   return NextResponse.json({ ok: true })

@@ -38,7 +38,11 @@ export async function POST(request: Request) {
     admin_id: auth.userId,
     admin_email: auth.email,
     action_type: 'BANNER_CREATE',
-    details: `Created banner: ${title}`,
+    details: {
+      message: 'Created banner.',
+      title,
+      imageUrl,
+    },
   })
 
   return NextResponse.json({ ok: true })
@@ -67,7 +71,10 @@ export async function DELETE(request: Request) {
     admin_email: auth.email,
     action_type: 'BANNER_DELETE',
     target_id: bannerId,
-    details: 'Deleted banner.',
+    details: {
+      message: 'Deleted banner.',
+      bannerId,
+    },
   })
 
   return NextResponse.json({ ok: true })

@@ -73,7 +73,11 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'ORDER_INTERVENTION',
     target_id: orderId,
-    details: `Marked as PAID (Paystack reconciliation). Reference: ${paymentReference}`,
+    details: {
+      message: 'Marked as PAID (Paystack reconciliation).',
+      orderId,
+      paymentReference,
+    },
   })
 
   return NextResponse.json({ ok: true })

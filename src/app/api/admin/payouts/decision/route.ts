@@ -96,7 +96,15 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: `PAYOUT_${action.toUpperCase()}`,
     target_id: payoutId,
-    details: `Payout status ${currentStatus} -> ${status}. Category: ${reasonCategory}. Reason: ${reason}. idem:${idempotencyKey}`,
+    details: {
+      message: 'Payout status updated.',
+      payoutId,
+      from: currentStatus,
+      to: status,
+      reasonCategory,
+      reason,
+      idempotencyKey,
+    },
   })
 
   return NextResponse.json({ ok: true })

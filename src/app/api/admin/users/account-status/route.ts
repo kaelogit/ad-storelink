@@ -43,7 +43,12 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'USER_STATUS_CHANGE',
     target_id: userId,
-    details: `Changed account status to ${accountStatus}. Reason: ${reason}`,
+    details: {
+      message: 'Changed account status.',
+      userId,
+      accountStatus,
+      reason,
+    },
   })
 
   return NextResponse.json({ ok: true })

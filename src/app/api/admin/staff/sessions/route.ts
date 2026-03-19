@@ -97,7 +97,13 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'STAFF_SESSION_REVOKE',
     target_id: session.admin_id,
-    details: `Revoked session ${session.id} (IP: ${session.ip ?? 'unknown'}, device: ${session.device_info ?? 'n/a'})`,
+    details: {
+      message: 'Revoked staff session.',
+      sessionId: session.id,
+      ip: session.ip ?? null,
+      device_info: session.device_info ?? null,
+      admin_id: session.admin_id,
+    },
   })
 
   return NextResponse.json({ ok: true })

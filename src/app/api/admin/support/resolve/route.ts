@@ -31,7 +31,10 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'SUPPORT_TICKET_RESOLVED',
     target_id: ticketId,
-    details: 'Ticket marked as RESOLVED by support admin.',
+    details: {
+      message: 'Ticket marked as RESOLVED by support admin.',
+      ticketId,
+    },
   })
 
   return NextResponse.json({ ok: true })

@@ -48,7 +48,12 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: isActive ? 'STAFF_ACTIVATED' : 'STAFF_SUSPENDED',
     target_id: staffId,
-    details: `${isActive ? 'Activated' : 'Suspended'} access for staff: ${staff.email}`,
+    details: {
+      message: `${isActive ? 'Activated' : 'Suspended'} staff access.`,
+      staffId,
+      staffEmail: staff.email,
+      is_active: isActive,
+    },
   })
 
   return NextResponse.json({ ok: true })

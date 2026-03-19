@@ -118,7 +118,15 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'ORDER_INTERVENTION',
     target_id: orderId,
-    details: `Forced status ${currentStatus} -> ${newStatus}. Category: ${reasonCategory}. Reason: ${reason}. idem:${idempotencyKey}`,
+    details: {
+      message: 'Forced order status.',
+      orderId,
+      from: currentStatus,
+      to: newStatus,
+      reasonCategory,
+      reason,
+      idempotencyKey,
+    },
   })
 
   return NextResponse.json({ ok: true })

@@ -1,6 +1,8 @@
 import { createClient } from './supabase/client'
 
-export const trackAdminAction = async (action: string, details: string, targetId?: string) => {
+type AuditDetails = string | Record<string, unknown>
+
+export const trackAdminAction = async (action: string, details: AuditDetails, targetId?: string) => {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -11,7 +13,7 @@ export const trackAdminAction = async (action: string, details: string, targetId
         admin_email: user.email,
         action_type: action,
         target_id: targetId || null,
-        details: details
+        details: typeof details === 'string' ? { message: details } : details
     })
 
     if (error) {

@@ -35,7 +35,11 @@ export async function POST(request: Request) {
     admin_id: auth.userId,
     admin_email: auth.email,
     action_type: 'BROADCAST_SENT',
-    details: `Sent "${title}" to ${segment}`,
+    details: {
+      message: 'Sent broadcast.',
+      title,
+      segment,
+    },
   })
 
   return NextResponse.json({ ok: true })

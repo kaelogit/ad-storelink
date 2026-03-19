@@ -58,7 +58,13 @@ export async function POST(request: Request) {
     admin_email: auth.email,
     action_type: 'APPEAL_DECISION',
     target_id: userId,
-    details: `Appeal ${decision === 'approve' ? 'Approved' : 'Rejected'}. Appeal ID: ${appealId}. ${adminNotes ? `Notes: ${adminNotes}` : ''}`,
+    details: {
+      message: `Appeal ${decision === 'approve' ? 'Approved' : 'Rejected'}.`,
+      appealId,
+      userId,
+      decision,
+      adminNotes: adminNotes || null,
+    },
   })
 
   return NextResponse.json({ ok: true })
