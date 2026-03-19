@@ -36,6 +36,17 @@ type AdminSession = {
   created_at: string
 }
 
+function detailsToText(details: unknown): string {
+  if (details == null) return ''
+  if (typeof details === 'string') return details
+  if (typeof details === 'number' || typeof details === 'boolean') return String(details)
+  try {
+    return JSON.stringify(details)
+  } catch {
+    return ''
+  }
+}
+
 export default function SuperAdminPage() {
   const supabase = createClient()
   const tableState = useTableStateFromUrl()
@@ -485,7 +496,7 @@ export default function SuperAdminPage() {
                               {log.action_type}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-gray-600 text-xs">{log.details}</td>
+                          <td className="px-6 py-4 text-gray-600 text-xs">{detailsToText(log.details)}</td>
                         </tr>
                       ))}
                     </tbody>
