@@ -242,6 +242,7 @@ export default function ModeratorPage() {
   const executeVerification = async () => {
     if (!pendingVerification) return
     const { requestId, profileId, status } = pendingVerification
+    if (status !== 'verified') return
     setIsProcessing(true)
     setFeedback({ tone: 'info', message: 'Processing moderation decision...' })
 
@@ -265,6 +266,40 @@ export default function ModeratorPage() {
     setSelectedRequest(null)
     setPendingVerification(null)
     setFeedback({ tone: 'success', message: `Merchant marked as ${status}.` })
+    setIsProcessing(false)
+    fetchRequests()
+  }
+
+  const executeVerificationReject = async (payload: { category: string; reason: string }) => {
+    if (!pendingVerification) return
+    const { requestId, profileId, status } = pendingVerification
+    if (status !== 'rejected') return
+
+    setIsProcessing(true)
+    setFeedback({ tone: 'info', message: 'Processing moderation decision...' })
+
+    const response = await fetch('/api/admin/moderation/verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId,
+        profileId,
+        decision: status,
+        reasonCategory: payload.category,
+        reason: payload.reason,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorMessage = await parseApiError(response, 'Failed to process verification decision.')
+      setFeedback({ tone: 'error', message: errorMessage })
+      setIsProcessing(false)
+      return
+    }
+
+    setSelectedRequest(null)
+    setPendingVerification(null)
+    setFeedback({ tone: 'success', message: 'Merchant marked as rejected.' })
     setIsProcessing(false)
     fetchRequests()
   }
@@ -312,22 +347,33 @@ export default function ModeratorPage() {
       </div>
 
       <ConfirmActionModal
-        open={pendingVerification !== null}
-        title={pendingVerification?.status === 'verified' ? 'Verify this merchant?' : 'Reject this merchant?'}
+        open={pendingVerification?.status === 'verified'}
+        title="Verify this merchant?"
         description={
-          pendingVerification?.status === 'verified'
-            ? `Approve verification for ${pendingVerification.displayName ?? 'this merchant'}. They will gain verified status.`
-            : `Reject verification for ${pendingVerification?.displayName ?? 'this merchant'}. They will need to reapply.`
+          `Approve verification for ${pendingVerification?.displayName ?? 'this merchant'}. They will gain verified status.`
         }
         impactSummary={
-          pendingVerification?.status === 'verified'
-            ? 'Merchant will be marked verified and can use verified-only features.'
-            : 'Application will be marked rejected. Merchant can submit a new request later.'
+          'Merchant will be marked verified and can use verified-only features.'
         }
-        confirmLabel={pendingVerification?.status === 'verified' ? 'Verify' : 'Reject'}
+        confirmLabel="Verify"
         submitting={isProcessing}
         onClose={() => setPendingVerification(null)}
         onConfirm={executeVerification}
+      />
+      <ActionReasonModal
+        open={pendingVerification?.status === 'rejected'}
+        title="Reject this merchant?"
+        description={`Reject verification for ${pendingVerification?.displayName ?? 'this merchant'}. A reason is required and will be shown in-app.`}
+        impactSummary="Application will be marked rejected. Merchant can submit a new request later."
+        categoryOptions={[
+          { value: 'document_quality', label: 'Document quality issue' },
+          { value: 'identity_mismatch', label: 'Identity mismatch' },
+          { value: 'fraud_risk', label: 'Fraud risk' },
+          { value: 'other', label: 'Other' },
+        ]}
+        submitting={isProcessing}
+        onClose={() => setPendingVerification(null)}
+        onSubmit={executeVerificationReject}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -506,6 +552,9 @@ export default function ModeratorPage() {
                             />
                             <InfoRow label="Document Type" value={selectedRequest.id_type || 'National ID'} />
                             <InfoRow label="Document Number" value={selectedRequest.id_number || '—'} />
+                            {selectedRequest.rejection_reason && (
+                              <InfoRow label="Last Rejection Reason" value={selectedRequest.rejection_reason} />
+                            )}
                         </div>
 
                         {selectedRequest.status === 'pending' && (
