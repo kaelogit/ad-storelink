@@ -53,7 +53,8 @@ export async function POST(request: Request) {
     .select('id')
     .eq('action_type', `PAYOUT_${action.toUpperCase()}`)
     .eq('target_id', payoutId)
-    .ilike('details', `%idem:${idempotencyKey}%`)
+    // admin_audit_logs.details is jsonb; cast JSON key -> text for reliable filtering
+    .eq('details->>idempotencyKey', idempotencyKey)
     .limit(1)
     .maybeSingle()
 

@@ -51,6 +51,16 @@ export default function AuditLogPage() {
     setLoading(false)
   }, [dateFrom, dateTo, actionFilter])
 
+  const detailsToText = (details: unknown): string => {
+    if (details == null) return ''
+    if (typeof details === 'string') return details
+    try {
+      return JSON.stringify(details)
+    } catch {
+      return String(details)
+    }
+  }
+
   useEffect(() => {
     fetchLogs()
   }, [fetchLogs])
@@ -60,7 +70,7 @@ export default function AuditLogPage() {
       !appliedSearch ||
       l.admin_email?.toLowerCase().includes(appliedSearch.toLowerCase()) ||
       l.action_type?.toLowerCase().includes(appliedSearch.toLowerCase()) ||
-      (l.details ?? '').toLowerCase().includes(appliedSearch.toLowerCase()) ||
+      detailsToText(l.details).toLowerCase().includes(appliedSearch.toLowerCase()) ||
       (l.target_id ?? '').toLowerCase().includes(appliedSearch.toLowerCase())
   )
 
@@ -170,7 +180,9 @@ export default function AuditLogPage() {
                       <Badge tone="neutral">{log.action_type}</Badge>
                     </DataTableCell>
                     <DataTableCell className="text-xs text-[var(--muted)]">{log.target_id ?? '—'}</DataTableCell>
-                    <DataTableCell className="max-w-md truncate text-xs">{log.details ?? '—'}</DataTableCell>
+                    <DataTableCell className="max-w-md truncate text-xs">
+                      {log.details == null ? '—' : detailsToText(log.details)}
+                    </DataTableCell>
                   </DataTableRow>
                 ))}
               </DataTableBody>

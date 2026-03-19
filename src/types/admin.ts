@@ -29,7 +29,8 @@ export type AdminAuditLog = {
   admin_id: string | null
   admin_email: string | null
   action_type: string
-  details: string | null
+  // admin_audit_logs.details is jsonb in DB; can be object or string depending on how it was inserted.
+  details: unknown | null
   target_id: string | null
   created_at: string
 }

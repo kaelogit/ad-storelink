@@ -397,14 +397,14 @@ function QuickLink({ href, icon: Icon, label, count, color }: any) {
 }
 
 function buildInterventionTrends(
-  logs: { action_type: string; details: string | null; created_at: string }[]
+  logs: { action_type: string; details: unknown | null; created_at: string }[]
 ): { actionType: string; category: string; count: number }[] {
   const aggregate = new Map<string, number>()
 
   logs.forEach((log) => {
     const actionType = log.action_type
-    const details = log.details || ''
-    const categoryMatch = details.match(/Category:\s*([a-zA-Z_]+)/)
+    const detailsText = log.details == null ? '' : typeof log.details === 'string' ? log.details : JSON.stringify(log.details)
+    const categoryMatch = detailsText.match(/Category:\s*([a-zA-Z_]+)/)
     const category = categoryMatch ? categoryMatch[1] : 'uncategorized'
     const key = `${actionType}::${category}`
     aggregate.set(key, (aggregate.get(key) || 0) + 1)
