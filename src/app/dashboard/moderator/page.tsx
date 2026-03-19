@@ -45,14 +45,14 @@ export default function ModeratorPage() {
 
   const fetchRequests = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
+    // TEMP debug: remove the profiles embed join.
+    // If the list starts showing rows, the issue is the embed join/RLS on profiles.
+    const { data, error } = await supabase
       .from('merchant_verifications')
-      .select(`
-        *,
-        profile:profile_id (display_name, email, logo_url, slug)
-      `)
+      .select('*')
       .order('created_at', { ascending: false })
-    if (data) setRequests(data)
+    if (error) console.error('fetchRequests: merchant_verifications failed', error)
+    setRequests(data ?? [])
     setLoading(false)
   }, [])
 
@@ -347,7 +347,7 @@ export default function ModeratorPage() {
                             <div className="flex gap-3 pt-4">
                                 <button 
                                     disabled={isProcessing}
-                                    onClick={() => handleVerification(selectedRequest.id, selectedRequest.profile_id, 'rejected')}
+                                    onClick={() => handleVerification(selectedRequest.id, selectedRequest.user_id, 'rejected')}
                                     type="button"
                                     className="flex-1 flex items-center justify-center gap-2 bg-white border border-red-200 text-red-600 py-2.5 rounded-lg text-xs font-bold hover:bg-red-50 transition"
                                 >
@@ -355,7 +355,7 @@ export default function ModeratorPage() {
                                 </button>
                                 <button 
                                     disabled={isProcessing}
-                                    onClick={() => handleVerification(selectedRequest.id, selectedRequest.profile_id, 'verified')}
+                                    onClick={() => handleVerification(selectedRequest.id, selectedRequest.user_id, 'verified')}
                                     type="button"
                                     className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-xs font-bold hover:bg-green-700 transition"
                                 >
