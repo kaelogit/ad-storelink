@@ -24,7 +24,10 @@ export default function ModeratorPage() {
   const [requests, setRequests] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
+  const [selectedProfile, setSelectedProfile] = useState<any>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [idImageError, setIdImageError] = useState(false)
+  const [faceImageError, setFaceImageError] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [pendingVerification, setPendingVerification] = useState<{
     requestId: string
@@ -62,13 +65,47 @@ export default function ModeratorPage() {
     else if (statusFilter === 'approved') list = list.filter((r) => r.status === 'approved')
     else if (statusFilter === 'rejected') list = list.filter((r) => r.status === 'rejected')
     list = [...list].sort((a, b) => {
-      const aVal = sort === 'created_at' ? new Date(a.created_at).getTime() : (a.profile?.display_name ?? '').toLowerCase()
-      const bVal = sort === 'created_at' ? new Date(b.created_at).getTime() : (b.profile?.display_name ?? '').toLowerCase()
+      const aName = a.profile?.display_name ?? a.user_id ?? ''
+      const bName = b.profile?.display_name ?? b.user_id ?? ''
+      const aVal = sort === 'created_at' ? new Date(a.created_at).getTime() : String(aName).toLowerCase()
+      const bVal = sort === 'created_at' ? new Date(b.created_at).getTime() : String(bName).toLowerCase()
       if (typeof aVal === 'number' && typeof bVal === 'number') return order === 'asc' ? aVal - bVal : bVal - aVal
       return order === 'asc' ? String(aVal).localeCompare(String(bVal)) : String(bVal).localeCompare(String(aVal))
     })
     return list
   }, [requests, statusFilter, sort, order])
+
+  // When we select a request, pull the profile separately (so the list doesn't go blank if embeds are blocked).
+  useEffect(() => {
+    let cancelled = false
+
+    const run = async () => {
+      setSelectedProfile(null)
+      if (!selectedRequest?.user_id) return
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('display_name, email, logo_url, slug')
+        .eq('id', selectedRequest.user_id)
+        .maybeSingle()
+
+      if (!cancelled) {
+        if (error) console.error('fetch profile failed', error)
+        setSelectedProfile(data ?? null)
+      }
+    }
+
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRequest?.user_id])
+
+  // Reset image error flags when switching rows
+  useEffect(() => {
+    setIdImageError(false)
+    setFaceImageError(false)
+  }, [selectedRequest?.id])
 
   useEffect(() => {
     fetchRequests()
@@ -163,7 +200,7 @@ export default function ModeratorPage() {
   }
 
   const handleVerification = async (requestId: string, profileId: string, status: 'verified' | 'rejected') => {
-    setPendingVerification({ requestId, profileId, status, displayName: selectedRequest?.profile?.display_name })
+    setPendingVerification({ requestId, profileId, status, displayName: selectedProfile?.display_name })
   }
 
   const executeVerification = async () => {
@@ -281,11 +318,15 @@ export default function ModeratorPage() {
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <div className="h-8 w-8 rounded bg-gray-100 flex items-center justify-center font-bold text-blue-600">
-                                            {req.profile?.display_name?.[0]}
+                                            {(req.profile?.display_name ?? req.user_id ?? 'M')?.slice(0, 1)}
                                         </div>
                                         <div>
-                                            <p className="font-semibold text-gray-900">{req.profile?.display_name}</p>
-                                            <p className="text-[10px] text-gray-500">@{req.profile?.slug}</p>
+                                            <p className="font-semibold text-gray-900">
+                                              {req.profile?.display_name ?? req.user_id?.slice(0, 8) ?? 'Merchant'}
+                                            </p>
+                                            <p className="text-[10px] text-gray-500">
+                                              @{req.profile?.slug ?? 'merchant'}
+                                            </p>
                                         </div>
                                     </div>
                                 </td>
@@ -321,26 +362,84 @@ export default function ModeratorPage() {
                     </div>
 
                     <div className="p-6 space-y-6">
-                        {/* ID Preview (Simulation) */}
-                        <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center text-white relative group">
-                           {selectedRequest.id_url ? (
-                               <img src={selectedRequest.id_url} className="w-full h-full object-contain rounded-lg" alt="Identity Document" />
-                           ) : (
-                               <div className="text-center">
-                                   <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
-                                   <p className="text-[10px] opacity-50 uppercase tracking-widest font-bold">Document Image</p>
-                               </div>
-                           )}
-                           <button className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 font-bold text-xs">
-                               <ExternalLink size={14} /> Full Preview
-                           </button>
+                        {/* Document previews */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {/* Identity document */}
+                          <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center text-white relative group overflow-hidden">
+                            {!idImageError && selectedRequest.id_url ? (
+                              <img
+                                src={selectedRequest.id_url}
+                                crossOrigin="anonymous"
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain"
+                                alt="Identity Document"
+                                onError={() => setIdImageError(true)}
+                              />
+                            ) : (
+                              <div className="text-center px-4">
+                                <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
+                                <p className="text-[10px] opacity-50 uppercase tracking-widest font-bold">
+                                  Identity Document
+                                </p>
+                              </div>
+                            )}
+
+                            {selectedRequest.id_url && !idImageError && (
+                              <a
+                                href={selectedRequest.id_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 font-bold text-xs"
+                              >
+                                <ExternalLink size={14} /> Full Preview
+                              </a>
+                            )}
+                          </div>
+
+                          {/* Selfie / face match */}
+                          <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center text-white relative group overflow-hidden">
+                            {!faceImageError && selectedRequest.face_url ? (
+                              <img
+                                src={selectedRequest.face_url}
+                                crossOrigin="anonymous"
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain"
+                                alt="Selfie / Face"
+                                onError={() => setFaceImageError(true)}
+                              />
+                            ) : (
+                              <div className="text-center px-4">
+                                <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
+                                <p className="text-[10px] opacity-50 uppercase tracking-widest font-bold">
+                                  Selfie / Face
+                                </p>
+                              </div>
+                            )}
+
+                            {selectedRequest.face_url && !faceImageError && (
+                              <a
+                                href={selectedRequest.face_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 font-bold text-xs"
+                              >
+                                <ExternalLink size={14} /> Full Preview
+                              </a>
+                            )}
+                          </div>
                         </div>
 
                         <div className="space-y-4">
-                            <InfoRow label="Business Name" value={selectedRequest.profile?.display_name} />
-                            <InfoRow label="Email Address" value={selectedRequest.profile?.email} />
+                            <InfoRow
+                              label="Business Name"
+                              value={selectedProfile?.display_name ?? selectedRequest.user_id?.slice(0, 8) ?? '—'}
+                            />
+                            <InfoRow
+                              label="Email Address"
+                              value={selectedProfile?.email ?? '—'}
+                            />
                             <InfoRow label="Document Type" value={selectedRequest.id_type || 'National ID'} />
-                            <InfoRow label="Document Number" value={selectedRequest.id_number || 'TRX-9982-11'} />
+                            <InfoRow label="Document Number" value={selectedRequest.id_number || '—'} />
                         </div>
 
                         {selectedRequest.status === 'pending' && (
