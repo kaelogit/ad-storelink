@@ -25,6 +25,7 @@ export default function ModeratorPage() {
   const [loading, setLoading] = useState(true)
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
   const [selectedProfile, setSelectedProfile] = useState<any>(null)
+  const [profilesById, setProfilesById] = useState<Record<string, any>>({})
   const [isProcessing, setIsProcessing] = useState(false)
   const [idImageError, setIdImageError] = useState(false)
   const [faceImageError, setFaceImageError] = useState(false)
@@ -106,6 +107,41 @@ export default function ModeratorPage() {
     setIdImageError(false)
     setFaceImageError(false)
   }, [selectedRequest?.id])
+
+  // Cache profiles for the visible list (so slug/name render for each row).
+  useEffect(() => {
+    const loadProfiles = async () => {
+      const userIds = Array.from(
+        new Set(requests.map((r) => r?.user_id).filter(Boolean))
+      ) as string[]
+
+      if (userIds.length === 0) return
+
+      // Only fetch profiles we don't already have.
+      const missing = userIds.filter((id) => !profilesById[id])
+      if (missing.length === 0) return
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, display_name, email, logo_url, slug')
+        .in('id', missing)
+
+      if (error) {
+        console.error('loadProfiles failed', error)
+        return
+      }
+
+      const next = { ...profilesById }
+      ;(data ?? []).forEach((p) => {
+        if (!p?.id) return
+        next[p.id] = p
+      })
+      setProfilesById(next)
+    }
+
+    loadProfiles()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests])
 
   useEffect(() => {
     fetchRequests()
@@ -318,14 +354,14 @@ export default function ModeratorPage() {
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <div className="h-8 w-8 rounded bg-gray-100 flex items-center justify-center font-bold text-blue-600">
-                                            {(req.profile?.display_name ?? req.user_id ?? 'M')?.slice(0, 1)}
+                                            {(profilesById?.[req.user_id]?.display_name ?? req.user_id ?? 'M')?.slice(0, 1)}
                                         </div>
                                         <div>
                                             <p className="font-semibold text-gray-900">
-                                              {req.profile?.display_name ?? req.user_id?.slice(0, 8) ?? 'Merchant'}
+                                              {profilesById?.[req.user_id]?.display_name ?? req.user_id?.slice(0, 8) ?? 'Merchant'}
                                             </p>
                                             <p className="text-[10px] text-gray-500">
-                                              @{req.profile?.slug ?? 'merchant'}
+                                              @{profilesById?.[req.user_id]?.slug ?? 'merchant'}
                                             </p>
                                         </div>
                                     </div>
@@ -384,7 +420,7 @@ export default function ModeratorPage() {
                               </div>
                             )}
 
-                            {selectedRequest.id_url && !idImageError && (
+                            {selectedRequest.id_url && (
                               <a
                                 href={selectedRequest.id_url}
                                 target="_blank"
@@ -393,6 +429,19 @@ export default function ModeratorPage() {
                               >
                                 <ExternalLink size={14} /> Full Preview
                               </a>
+                            )}
+
+                            {selectedRequest.id_url && (
+                              <div className="absolute bottom-2 left-2 right-2">
+                                <a
+                                  href={selectedRequest.id_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block text-[10px] text-blue-200 bg-black/40 rounded px-2 py-1 overflow-hidden whitespace-nowrap text-ellipsis"
+                                >
+                                  Open ID URL
+                                </a>
+                              </div>
                             )}
                           </div>
 
@@ -416,7 +465,7 @@ export default function ModeratorPage() {
                               </div>
                             )}
 
-                            {selectedRequest.face_url && !faceImageError && (
+                            {selectedRequest.face_url && (
                               <a
                                 href={selectedRequest.face_url}
                                 target="_blank"
@@ -426,17 +475,34 @@ export default function ModeratorPage() {
                                 <ExternalLink size={14} /> Full Preview
                               </a>
                             )}
+
+                            {selectedRequest.face_url && (
+                              <div className="absolute bottom-2 left-2 right-2">
+                                <a
+                                  href={selectedRequest.face_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block text-[10px] text-blue-200 bg-black/40 rounded px-2 py-1 overflow-hidden whitespace-nowrap text-ellipsis"
+                                >
+                                  Open Selfie URL
+                                </a>
+                              </div>
+                            )}
                           </div>
                         </div>
 
                         <div className="space-y-4">
                             <InfoRow
                               label="Business Name"
-                              value={selectedProfile?.display_name ?? selectedRequest.user_id?.slice(0, 8) ?? '—'}
+                              value={selectedProfile?.display_name ?? selectedRequest?.user_id?.slice(0, 8) ?? '—'}
                             />
                             <InfoRow
                               label="Email Address"
                               value={selectedProfile?.email ?? '—'}
+                            />
+                            <InfoRow
+                              label="Slug"
+                              value={selectedProfile?.slug ?? '—'}
                             />
                             <InfoRow label="Document Type" value={selectedRequest.id_type || 'National ID'} />
                             <InfoRow label="Document Number" value={selectedRequest.id_number || '—'} />
