@@ -36,7 +36,8 @@ export default function SupportWorkspace() {
   const [pendingStatus, setPendingStatus] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [showResolveConfirm, setShowResolveConfirm] = useState(false)
-  const [ticketsError, setTicketsError] = useState<string | null>(null)
+  const [ticketsLoadError, setTicketsLoadError] = useState<string | null>(null)
+  const [ticketsInfoBanner, setTicketsInfoBanner] = useState<string | null>(null)
 
   // --- INIT ---
   useEffect(() => {
@@ -45,7 +46,8 @@ export default function SupportWorkspace() {
 
   const fetchTickets = async () => {
     setLoadingTickets(true)
-    setTicketsError(null)
+    setTicketsLoadError(null)
+    setTicketsInfoBanner(null)
     // Prefer FK join (migration adds support_tickets_user_id_fkey). Fallback: list tickets without profile embed.
     let data: any[] | null = null
     let error: { message: string } | null = null
@@ -71,13 +73,13 @@ export default function SupportWorkspace() {
       data = plain.data
       error = plain.error
       if (error) {
-        setTicketsError(error.message)
+        setTicketsLoadError(error.message)
         setTickets([])
         setLoadingTickets(false)
         return
       }
-      setTicketsError(
-        'Could not join profiles (missing FK). Run migration 20260622000000_support_tickets_fk_and_rls_admin_inbox.sql — tickets show without user email until then.'
+      setTicketsInfoBanner(
+        'Could not join profiles (missing FK on support_tickets.user_id). Tickets still load; run migration 20260622000000 to show user emails in the list.'
       )
     } else {
       data = withProfiles.data
@@ -205,12 +207,10 @@ export default function SupportWorkspace() {
         subtitle="Customer care and order debugging center."
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
-      {ticketsError && (
-        <ActionFeedback
-          tone="error"
-          message={`Could not load tickets: ${ticketsError}. Run the latest support_tickets migration (FK + RLS for admins) or check Supabase logs.`}
-        />
+      {ticketsLoadError && (
+        <ActionFeedback tone="error" message={ticketsLoadError} />
       )}
+      {ticketsInfoBanner && <ActionFeedback tone="info" message={ticketsInfoBanner} />}
 
       <TabsRoot>
         <Tab
@@ -274,8 +274,8 @@ export default function SupportWorkspace() {
                         <Button size="sm" onClick={requestResolveTicket} className="bg-emerald-600 hover:bg-emerald-700 text-white border-0">Mark Resolved</Button>
                     </CardHeader>
                     <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-[var(--background)]/50">
-                        {(conversation?.messages ?? []).map((msg: any) => (
-                            <div key={msg.id} className={`flex flex-col ${msg.is_admin_reply ? 'items-end' : 'items-start'}`}>
+                        {normalizeThreadMessages(conversation).map((msg, i) => (
+                            <div key={msg.id ?? `thread-${i}`} className={`flex flex-col ${msg.is_admin_reply ? 'items-end' : 'items-start'}`}>
                                 <div className={`max-w-[80%] rounded-2xl p-4 text-sm ${msg.is_admin_reply ? 'bg-[var(--primary)] text-white rounded-br-none' : 'bg-[var(--surface)] text-[var(--foreground)] border border-[var(--border)] rounded-bl-none'}`}>
                                     {msg.message}
                                 </div>
@@ -436,6 +436,39 @@ function normalizeTicketStatus(status: string): 'OPEN' | 'PENDING' | 'RESOLVED' 
     return upper
   }
   return 'OPEN'
+}
+
+/** App historically stored the first user message only on support_tickets.message; thread RPC lists support_messages only. */
+type ThreadMsg = {
+  id?: string | null
+  message?: string | null
+  is_admin_reply?: boolean | null
+}
+
+function normalizeThreadMessages(conversation: { ticket?: Record<string, unknown>; messages?: ThreadMsg[] } | null): ThreadMsg[] {
+  const ticket = conversation?.ticket as
+    | { id?: string; message?: string | null; created_at?: string | null }
+    | undefined
+  const raw: ThreadMsg[] = [...(conversation?.messages ?? [])]
+  const initial = typeof ticket?.message === 'string' ? ticket.message.trim() : ''
+  if (!initial) return raw
+
+  const hasSame = raw.some(
+    (m) =>
+      !m.is_admin_reply &&
+      typeof m.message === 'string' &&
+      m.message.trim() === initial
+  )
+  if (hasSame) return raw
+
+  return [
+    {
+      id: ticket?.id ? `ticket-initial-${ticket.id}` : 'ticket-initial',
+      message: initial,
+      is_admin_reply: false,
+    },
+    ...raw,
+  ]
 }
 
 // --- SUB COMPONENTS ---
