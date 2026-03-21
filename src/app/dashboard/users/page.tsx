@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 
 const PAGE_SIZE = 20
+const UUID_URL_PARAM = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 
 export default function UserManagement() {
   const supabase = createClient()
@@ -72,10 +73,29 @@ export default function UserManagement() {
   const selectUser = async (userId: string) => {
     setDossierLoading(true)
     setDossier(null)
-    const { data, error } = await supabase.rpc('get_user_dossier', { p_user_id: userId })
+    const { data } = await supabase.rpc('get_user_dossier', { p_user_id: userId })
     if (data) setDossier(data)
     setDossierLoading(false)
   }
+
+  const autoOpenedDossierForQ = useRef<string | null>(null)
+
+  /** Deep link from Support (and elsewhere): `/dashboard/users?q=<user_uuid>` opens dossier when the row loads. */
+  useEffect(() => {
+    const term = q.trim()
+    if (!UUID_URL_PARAM.test(term)) {
+      autoOpenedDossierForQ.current = null
+      return
+    }
+    if (loading) return
+    const match = users.find((u) => u.id === term)
+    if (!match) return
+    if (dossier?.id === match.id) return
+    if (autoOpenedDossierForQ.current === term) return
+    autoOpenedDossierForQ.current = term
+    void selectUser(match.id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- selectUser is stable enough; avoid re-running when its identity changes
+  }, [q, loading, users, dossier?.id])
 
   const requestAccountStatusChange = () => {
     if (!dossier) return
