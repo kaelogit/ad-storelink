@@ -20,7 +20,8 @@ import {
   Package,
   Globe,
   CalendarCheck,
-  List
+  List,
+  ShoppingBag
 } from 'lucide-react'
 import { createClient } from '../../utils/supabase/client'
 import type { AdminRole } from '../../types/admin'
@@ -39,6 +40,7 @@ const navigation = [
   { name: 'Transaction Ops', href: '/dashboard/orders', icon: Package, allowedRoles: ['super_admin', 'finance', 'support'] },
   { name: 'Bookings', href: '/dashboard/bookings', icon: CalendarCheck, allowedRoles: ['super_admin', 'finance', 'support'] },
   { name: 'Service Listings', href: '/dashboard/service-listings', icon: List, allowedRoles: ['super_admin', 'finance', 'support', 'analyst'] },
+  { name: 'Products', href: '/dashboard/products', icon: ShoppingBag, allowedRoles: ['super_admin', 'finance', 'support', 'analyst', 'moderator'] },
   { name: 'Support', href: '/dashboard/support', icon: Headphones, allowedRoles: ['super_admin', 'support', 'moderator', 'analyst'] },
   { name: 'Content', href: '/dashboard/content', icon: PenTool, allowedRoles: ['super_admin', 'content', 'analyst'] },
   { name: 'Audit Log', href: '/dashboard/audit', icon: History, allowedRoles: ['super_admin', 'analyst'] },

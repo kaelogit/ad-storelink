@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   // Update ticket status and admin_reply so the app shows the reply (app reads support_tickets.admin_reply)
   const { error: ticketError } = await auth.supabase
     .from('support_tickets')
-    .update({ status: 'PENDING', admin_reply: message })
+    .update({ status: 'pending', admin_reply: message })
     .eq('id', ticketId)
 
   if (ticketError) {
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     action_type: 'SUPPORT_REPLY',
     target_id: ticketId,
     details: {
-      message: 'Sent support ticket reply and moved ticket to PENDING.',
+      message: 'Sent support ticket reply and moved ticket to pending.',
       ticketId,
     },
   })

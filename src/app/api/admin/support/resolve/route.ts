@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
   const { error } = await auth.supabase
     .from('support_tickets')
-    .update({ status: 'RESOLVED' })
+    .update({ status: 'resolved' })
     .eq('id', ticketId)
 
   if (error) {
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     action_type: 'SUPPORT_TICKET_RESOLVED',
     target_id: ticketId,
     details: {
-      message: 'Ticket marked as RESOLVED by support admin.',
+      message: 'Ticket marked as resolved by support admin.',
       ticketId,
     },
   })

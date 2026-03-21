@@ -91,10 +91,19 @@ export async function POST(request: Request) {
 
   if (auditError) {
     failedStep = 'admin_audit_logs_insert'
-    return NextResponse.json(
-      { error: auditError.message, debug: { failedStep, requestId, profileId, decision } },
-      { status: 400 }
-    )
+    // Do not block moderation outcome on audit write failures.
+    // Verification/rejection is the core action; audit logging is best-effort.
+    return NextResponse.json({
+      ok: true,
+      warning: 'Moderation applied, but audit log insert failed.',
+      debug: {
+        failedStep,
+        requestId,
+        profileId,
+        decision,
+        auditError: auditError.message,
+      },
+    })
   }
 
   return NextResponse.json({ ok: true })

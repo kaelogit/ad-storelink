@@ -5,58 +5,50 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { EmptyState } from '../../../components/admin/EmptyState'
-import { Package, Loader2, RefreshCcw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ShoppingBag, Loader2, ChevronLeft, ChevronRight, RefreshCcw } from 'lucide-react'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
 import { Button } from '../../../components/ui'
 
 const PAGE_SIZE = 50
 
-type ListingRow = {
+type ProductRow = {
   id: string
   seller_id: string
-  title: string
-  service_category: string
-  hero_price_min: number
-  currency_code: string
+  name: string
+  price: number
+  currency_code: string | null
+  stock_quantity: number
   is_active: boolean
+  slug: string
   seller_display_name: string
-  location_country_code: string | null
+  location_country: string | null
   created_at: string
 }
 
-/** Inner list remounts when country/category key changes so page resets to 0 (no stale offset). */
-function ServiceListingsTable({
-  countryCode,
-  categoryFilter,
-}: {
-  countryCode: string
-  categoryFilter: string
-}) {
+function ProductsTable({ countryCode }: { countryCode: string }) {
   const supabase = createClient()
   const router = useRouter()
-  const [list, setList] = useState<ListingRow[]>([])
+  const [list, setList] = useState<ProductRow[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(0)
 
   const loadList = useCallback(async () => {
     setLoading(true)
     const pCountry = countryCode === ALL_COUNTRIES_CODE ? null : countryCode
-    const pCategory = categoryFilter.trim() || null
     const offset = page * PAGE_SIZE
-    const { data, error } = await supabase.rpc('get_admin_service_listings', {
+    const { data, error } = await supabase.rpc('get_admin_products', {
       p_country_code: pCountry,
-      p_category: pCategory,
       p_limit: PAGE_SIZE,
       p_offset: offset,
     })
     if (!error && Array.isArray(data)) {
-      setList(data as ListingRow[])
+      setList(data as ProductRow[])
     } else {
       setList([])
     }
     setLoading(false)
-  }, [countryCode, categoryFilter, page, supabase])
+  }, [countryCode, page, supabase])
 
   useEffect(() => {
     void loadList()
@@ -74,16 +66,16 @@ function ServiceListingsTable({
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
       ) : list.length === 0 ? (
-        <EmptyState icon={Package} message="No service listings match the filter." />
+        <EmptyState icon={ShoppingBag} message="No products match the country filter." />
       ) : (
         <>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="text-left p-3 font-bold text-gray-600">Title</th>
-                  <th className="text-left p-3 font-bold text-gray-600">Category</th>
-                  <th className="text-left p-3 font-bold text-gray-600">From</th>
+                  <th className="text-left p-3 font-bold text-gray-600">Name</th>
+                  <th className="text-left p-3 font-bold text-gray-600">Price</th>
+                  <th className="text-left p-3 font-bold text-gray-600">Stock</th>
                   <th className="text-left p-3 font-bold text-gray-600">Seller</th>
                   <th className="text-left p-3 font-bold text-gray-600">Country</th>
                   <th className="text-left p-3 font-bold text-gray-600">Active</th>
@@ -96,22 +88,22 @@ function ServiceListingsTable({
                     key={row.id}
                     role="link"
                     tabIndex={0}
-                    onClick={() => router.push(`/dashboard/service-listings/${row.id}`)}
+                    onClick={() => router.push(`/dashboard/products/${row.id}`)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
-                        router.push(`/dashboard/service-listings/${row.id}`)
+                        router.push(`/dashboard/products/${row.id}`)
                       }
                     }}
                     className="border-b border-gray-100 hover:bg-blue-50/80 cursor-pointer transition-colors"
                   >
-                    <td className="p-3 font-medium text-gray-900">{row.title}</td>
-                    <td className="p-3 text-gray-600">{row.service_category}</td>
+                    <td className="p-3 font-medium text-gray-900 max-w-[220px] truncate">{row.name}</td>
                     <td className="p-3 font-mono">
-                      {row.currency_code} {(row.hero_price_min / 100).toLocaleString()}+
+                      {row.currency_code ?? '—'} {Number(row.price).toLocaleString()}
                     </td>
+                    <td className="p-3">{row.stock_quantity}</td>
                     <td className="p-3">{row.seller_display_name}</td>
-                    <td className="p-3 text-gray-500">{row.location_country_code ?? '—'}</td>
+                    <td className="p-3 text-gray-500">{row.location_country ?? '—'}</td>
                     <td className="p-3">
                       {row.is_active ? (
                         <span className="text-green-600 font-bold">Yes</span>
@@ -119,7 +111,9 @@ function ServiceListingsTable({
                         <span className="text-gray-400">No</span>
                       )}
                     </td>
-                    <td className="p-3 text-gray-500">{new Date(row.created_at).toLocaleDateString()}</td>
+                    <td className="p-3 text-gray-500">
+                      {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -171,36 +165,16 @@ function ServiceListingsTable({
   )
 }
 
-export default function ServiceListingsPage() {
+export default function AdminProductsPage() {
   const { countryCode } = useCountryFilter()
-  const [categoryFilter, setCategoryFilter] = useState<string>('')
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
-        title="Service Listings"
-        subtitle="Browse and filter service listings by country and category. Click a row for full detail."
+        title="Products"
+        subtitle="Browse product catalog by country (same filter as the header). Click a row for full detail."
       />
-
-      <div className="flex flex-wrap items-center gap-4">
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
-        >
-          <option value="">All categories</option>
-          <option value="nail_tech">Nail Tech</option>
-          <option value="barber">Barber</option>
-          <option value="makeup_artist">Makeup Artist</option>
-          <option value="braids_styling">Braids & Styling</option>
-          <option value="lashes">Lash Tech</option>
-          <option value="skincare">Skincare</option>
-          <option value="tailoring">Tailoring</option>
-          <option value="alterations">Alterations</option>
-        </select>
-      </div>
-
-      <ServiceListingsTable key={`${countryCode}-${categoryFilter}`} countryCode={countryCode} categoryFilter={categoryFilter} />
+      <ProductsTable key={countryCode} countryCode={countryCode} />
     </div>
   )
 }

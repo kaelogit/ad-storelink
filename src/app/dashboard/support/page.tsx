@@ -36,6 +36,7 @@ export default function SupportWorkspace() {
   const [pendingStatus, setPendingStatus] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [showResolveConfirm, setShowResolveConfirm] = useState(false)
+  const [ticketsError, setTicketsError] = useState<string | null>(null)
 
   // --- INIT ---
   useEffect(() => {
@@ -44,11 +45,44 @@ export default function SupportWorkspace() {
 
   const fetchTickets = async () => {
     setLoadingTickets(true)
-    const { data } = await supabase
+    setTicketsError(null)
+    // Prefer FK join (migration adds support_tickets_user_id_fkey). Fallback: list tickets without profile embed.
+    let data: any[] | null = null
+    let error: { message: string } | null = null
+
+    const withProfiles = await supabase
       .from('support_tickets')
-      .select('*, user:user_id(email, display_name)')
+      .select(
+        `
+        *,
+        profiles!support_tickets_user_id_fkey (
+          email,
+          display_name
+        )
+      `
+      )
       .order('created_at', { ascending: false })
-    
+
+    if (withProfiles.error) {
+      const plain = await supabase
+        .from('support_tickets')
+        .select('*')
+        .order('created_at', { ascending: false })
+      data = plain.data
+      error = plain.error
+      if (error) {
+        setTicketsError(error.message)
+        setTickets([])
+        setLoadingTickets(false)
+        return
+      }
+      setTicketsError(
+        'Could not join profiles (missing FK). Run migration 20260622000000_support_tickets_fk_and_rls_admin_inbox.sql — tickets show without user email until then.'
+      )
+    } else {
+      data = withProfiles.data
+    }
+
     if (data) {
       setTickets(data.filter((ticket) => normalizeTicketStatus(ticket.status) !== 'CLOSED'))
     }
@@ -171,6 +205,12 @@ export default function SupportWorkspace() {
         subtitle="Customer care and order debugging center."
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+      {ticketsError && (
+        <ActionFeedback
+          tone="error"
+          message={`Could not load tickets: ${ticketsError}. Run the latest support_tickets migration (FK + RLS for admins) or check Supabase logs.`}
+        />
+      )}
 
       <TabsRoot>
         <Tab
@@ -208,7 +248,11 @@ export default function SupportWorkspace() {
                       {tickets.map((ticket) => (
                         <tr key={ticket.id} onClick={() => openTicket(ticket.id)} className="hover:bg-[var(--background)]/50 cursor-pointer transition">
                           <td className="px-6 py-4 font-semibold text-[var(--foreground)]">{ticket.subject}</td>
-                          <td className="px-6 py-4 text-[var(--muted)]">{ticket.user?.email || 'Guest'}</td>
+                          <td className="px-6 py-4 text-[var(--muted)]">
+                            {(ticket as { profiles?: { email?: string | null } }).profiles?.email ||
+                              (ticket as { user_id?: string | null }).user_id?.slice(0, 8) ||
+                              'Guest'}
+                          </td>
                           <td className="px-6 py-4"><Badge tone={normalizeTicketStatus(ticket.status) === 'RESOLVED' ? 'success' : 'neutral'}>{normalizeTicketStatus(ticket.status)}</Badge></td>
                           <td className="px-6 py-4 text-right"><ArrowRight size={16} className="text-[var(--muted)] ml-auto" /></td>
                         </tr>
