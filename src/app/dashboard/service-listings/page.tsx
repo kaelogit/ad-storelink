@@ -71,7 +71,7 @@ function ServiceListingsTable({
     <>
       {loading && list.length === 0 ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--primary)' }} />
         </div>
       ) : list.length === 0 ? (
         <EmptyState icon={Package} message="No service listings match the filter." />
@@ -192,11 +192,17 @@ export default function ServiceListingsPage() {
           <option value="nail_tech">Nail Tech</option>
           <option value="barber">Barber</option>
           <option value="makeup_artist">Makeup Artist</option>
-          <option value="braids_styling">Braids & Styling</option>
+          <option value="makeup_artistry">Makeup Artistry</option>
+          <option value="pedicure_manicure">Pedicure/Manicure</option>
+          <option value="braids_styling">Braids Styling</option>
           <option value="lashes">Lash Tech</option>
           <option value="skincare">Skincare</option>
+          <option value="photographer">Photographer</option>
+          <option value="surprise_planners">Surprise Planners</option>
+          <option value="event_decorator">Event Decorator</option>
           <option value="tailoring">Tailoring</option>
           <option value="alterations">Alterations</option>
+          <option value="custom_outfits">Custom Outfits</option>
         </select>
       </div>
 

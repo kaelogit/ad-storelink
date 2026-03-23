@@ -80,6 +80,11 @@ export async function middleware(request: NextRequest) {
        return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
     }
 
+    // ⚙️ System settings (super admin only)
+    if (path.startsWith('/dashboard/settings') && role !== 'super_admin') {
+      return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
+    }
+
     // 🛡️ Moderator Area (KYC, Reports, Users)
     // Only Moderators OR Super Admin
     if (path.startsWith('/dashboard/moderator') && !['super_admin', 'moderator', 'analyst'].includes(role)) {
@@ -90,6 +95,24 @@ export async function middleware(request: NextRequest) {
     // Support Team, Moderators, OR Super Admin
     if (path.startsWith('/dashboard/support') && !['super_admin', 'support', 'moderator', 'analyst'].includes(role)) {
        return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
+    }
+
+    // 💼 Transaction ops and service bookings operations
+    if (
+      (path.startsWith('/dashboard/orders') ||
+        path.startsWith('/dashboard/bookings') ||
+        path.startsWith('/dashboard/clawback-debts')) &&
+      !['super_admin', 'finance', 'support', 'analyst'].includes(role)
+    ) {
+      return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
+    }
+
+    // 🧾 Listings/products operations
+    if (
+      (path.startsWith('/dashboard/service-listings') || path.startsWith('/dashboard/products')) &&
+      !['super_admin', 'finance', 'support', 'analyst', 'moderator'].includes(role)
+    ) {
+      return NextResponse.redirect(new URL('/dashboard/unauthorized', request.url));
     }
 
     // 🎨 Content Area (Blogs, Broadcasts)

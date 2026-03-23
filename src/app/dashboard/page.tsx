@@ -19,6 +19,7 @@ import {
   PlayCircle,
   ExternalLink,
   Package,
+  Sparkles,
 } from 'lucide-react'
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
@@ -46,6 +47,19 @@ export default function DashboardOverview() {
     { actionType: string; category: string; count: number }[]
   >([])
   const [dbLatency, setDbLatency] = useState<number | null>(null)
+  const [spotlightKpi, setSpotlightKpi] = useState<{
+    posts_24h: number
+    reports_24h: number
+    reports_open: number
+    seller_visits_7d: number
+    report_sla_hours: number
+  }>({
+    posts_24h: 0,
+    reports_24h: 0,
+    reports_open: 0,
+    seller_visits_7d: 0,
+    report_sla_hours: 0,
+  })
 
   useEffect(() => {
     async function init() {
@@ -86,6 +100,19 @@ export default function DashboardOverview() {
           .limit(400)
         if (auditData) {
           setInterventionTrends(buildInterventionTrends(auditData))
+        }
+
+        const { data: spotlightData } = await supabase.rpc('get_spotlight_kpi_snapshot', {
+          p_days: 7,
+        })
+        if (spotlightData) {
+          setSpotlightKpi({
+            posts_24h: Number((spotlightData as any).posts_24h || 0),
+            reports_24h: Number((spotlightData as any).reports_24h || 0),
+            reports_open: Number((spotlightData as any).reports_open || 0),
+            seller_visits_7d: Number((spotlightData as any).seller_visits_7d || 0),
+            report_sla_hours: Number((spotlightData as any).report_sla_hours || 0),
+          })
         }
 
         // 3. Health Check
@@ -226,6 +253,38 @@ export default function DashboardOverview() {
                     {stats.pending_kyc}
                 </span>
              </div>
+          </div>
+        </div>
+
+        {/* SPOTLIGHT KPI */}
+        <div className="rounded-xl border border-violet-100 bg-violet-50/30 p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[10px] font-bold uppercase text-violet-700 tracking-wider">Spotlight</h3>
+            <div className="rounded-full bg-violet-100 p-2 text-violet-700"><Sparkles size={16} /></div>
+          </div>
+          <div className="space-y-1 text-[11px]">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Posts (24h)</span>
+              <span className="font-bold text-gray-900">{spotlightKpi.posts_24h}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Reports open</span>
+              <span className={`font-bold ${spotlightKpi.reports_open > 0 ? 'text-red-600' : 'text-gray-400'}`}>{spotlightKpi.reports_open}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Report rate (24h)</span>
+              <span className="font-bold text-gray-900">
+                {spotlightKpi.posts_24h > 0 ? `${((spotlightKpi.reports_24h / spotlightKpi.posts_24h) * 100).toFixed(1)}%` : '0%'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Seller visits (7d)</span>
+              <span className="font-bold text-gray-900">{spotlightKpi.seller_visits_7d}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">SLA (hrs)</span>
+              <span className="font-bold text-gray-900">{spotlightKpi.report_sla_hours.toFixed(1)}</span>
+            </div>
           </div>
         </div>
       </div>

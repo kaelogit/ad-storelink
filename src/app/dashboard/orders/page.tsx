@@ -23,6 +23,31 @@ export default function OrderOps() {
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
+  const enrichOrderWithCoinOps = async (orderPayload: any) => {
+    if (!orderPayload?.id) return orderPayload
+    const { data: orderCoin } = await supabase
+      .from('orders')
+      .select('coin_redeemed, user_id')
+      .eq('id', orderPayload.id)
+      .maybeSingle()
+
+    let buyerCoinBalance: number | null = null
+    if (orderCoin?.user_id) {
+      const { data: buyerProfile } = await supabase
+        .from('profiles')
+        .select('coin_balance')
+        .eq('id', orderCoin.user_id)
+        .maybeSingle()
+      buyerCoinBalance = Number(buyerProfile?.coin_balance ?? 0)
+    }
+
+    return {
+      ...orderPayload,
+      coin_redeemed: Number(orderCoin?.coin_redeemed ?? 0),
+      buyer_coin_balance: buyerCoinBalance,
+    }
+  }
+
   const searchOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!query) return
@@ -30,8 +55,11 @@ export default function OrderOps() {
     setLoading(true)
     setOrder(null)
     const { data, error } = await supabase.rpc('get_order_details', { p_query: query.trim() })
-    
-    if (data) setOrder(data)
+
+    if (data) {
+      const enriched = await enrichOrderWithCoinOps(data)
+      setOrder(enriched)
+    }
     else if (!data) setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
     
     setLoading(false)
@@ -44,7 +72,10 @@ export default function OrderOps() {
     setFeedback({ tone: 'info', message: 'Marking order as paid...' })
     const response = await fetch('/api/admin/orders/mark-paid', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `mark-paid-${order.id}-${ref}`,
+      },
       body: JSON.stringify({ orderId: order.id, paymentReference: ref }),
     })
     if (!response.ok) {
@@ -54,7 +85,8 @@ export default function OrderOps() {
       return
     }
     const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
-    setOrder(updated)
+    const enriched = await enrichOrderWithCoinOps(updated)
+    setOrder(enriched)
     setMarkPaidRef('')
     setFeedback({ tone: 'success', message: 'Order marked as PAID. Chat notification added if applicable.' })
     setMarkPaidLoading(false)
@@ -76,7 +108,7 @@ export default function OrderOps() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-idempotency-key': makeIdempotencyKey('order-force-status'),
+        'x-idempotency-key': `order-force-status-${order.id}-${status}`,
       },
       body: JSON.stringify({
         orderId: order.id,
@@ -92,11 +124,22 @@ export default function OrderOps() {
       setActionLoading(false)
       return
     }
+    const payload = (await response.json().catch(() => ({}))) as {
+      refund?: { executed?: boolean; paystackReference?: string | null }
+      mode?: string
+    }
 
     const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
-    setOrder(updated)
+    const enriched = await enrichOrderWithCoinOps(updated)
+    setOrder(enriched)
     setPendingStatus(null)
-    setFeedback({ tone: 'success', message: `Order status updated to ${status}.` })
+    const refundMsg =
+      status === 'CANCELLED'
+        ? payload?.refund?.executed
+          ? ` Refund executed${payload.refund.paystackReference ? ` (${payload.refund.paystackReference})` : ''}.`
+          : ''
+        : ''
+    setFeedback({ tone: 'success', message: `Order status updated to ${status}.${refundMsg}`.trim() })
     setActionLoading(false)
   }
 
@@ -116,7 +159,7 @@ export default function OrderOps() {
                 <input 
                     type="text" 
                     placeholder="Paste Order UUID or Paystack Ref..." 
-                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-(--primary) text-sm font-mono"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                 />
@@ -149,6 +192,16 @@ export default function OrderOps() {
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Total Value</p>
                         <span className="text-2xl font-mono text-gray-900">{order.currency} {order.amount.toLocaleString()}</span>
                     </div>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Coins Redeemed (Order)</p>
+                    <p className="text-sm font-black text-gray-900">{Number(order.coin_redeemed || 0).toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Buyer Coin Balance (Now)</p>
+                    <p className="text-sm font-black text-gray-900">{Number(order.buyer_coin_balance || 0).toLocaleString()}</p>
+                  </div>
                 </div>
 
                 {/* The Timeline */}
@@ -196,7 +249,7 @@ export default function OrderOps() {
                     <div className="p-4 bg-gray-50 border-b border-gray-200 font-bold text-xs text-gray-500 uppercase">Parties Involved</div>
                     <div className="p-4 space-y-4">
                         <div className="flex items-start gap-3">
-                            <div className="bg-blue-100 p-2 rounded-full text-blue-600"><User size={16} /></div>
+                            <div className="rounded-full p-2" style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)', color: 'var(--primary)' }}><User size={16} /></div>
                             <div>
                                 <p className="text-xs font-bold text-gray-400 uppercase">Buyer</p>
                                 <p className="font-bold text-gray-900">{order.buyer.name}</p>
@@ -317,14 +370,6 @@ export default function OrderOps() {
   )
 }
 
-function makeIdempotencyKey(scope: string) {
-  const randomPart =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  return `${scope}-${randomPart}`
-}
-
 function TimelineItem({ icon: Icon, label, date, active, isLast }: any) {
     return (
         <div className="flex gap-4 relative z-10">
@@ -343,7 +388,7 @@ function getStatusColor(status: string) {
     switch (status) {
         case 'COMPLETED': return 'text-green-600'
         case 'CANCELLED': return 'text-red-600'
-        case 'PAID': return 'text-blue-600'
+        case 'PAID': return 'text-(--primary)'
         case 'SHIPPED': return 'text-purple-600'
         default: return 'text-gray-600'
     }

@@ -193,7 +193,7 @@ export default function SupportWorkspace() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-idempotency-key': makeIdempotencyKey('support-order-force-status'),
+        'x-idempotency-key': `support-order-force-status-${order.id}-${status}`,
       },
       body: JSON.stringify({
         orderId: order.id,
@@ -209,11 +209,21 @@ export default function SupportWorkspace() {
       setActionLoading(false)
       return
     }
+    const payload = (await response.json().catch(() => ({}))) as {
+      refund?: { executed?: boolean; paystackReference?: string | null }
+      mode?: string
+    }
 
     const { data: updated } = await supabase.rpc('get_order_details', { p_query: order.id })
     setOrder(updated)
     setPendingStatus(null)
-    setFeedback({ tone: 'success', message: `Order status updated to ${status}.` })
+    const refundMsg =
+      status === 'CANCELLED'
+        ? payload?.refund?.executed
+          ? ` Refund executed${payload.refund.paystackReference ? ` (${payload.refund.paystackReference})` : ''}.`
+          : ''
+        : ''
+    setFeedback({ tone: 'success', message: `Order status updated to ${status}.${refundMsg}`.trim() })
     setActionLoading(false)
   }
 
@@ -254,10 +264,10 @@ export default function SupportWorkspace() {
             <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <CardContent className="p-0 flex-1 overflow-y-auto">
                 {loadingTickets ? (
-                  <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" /></div>
+                  <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-(--primary)" /></div>
                 ) : (
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-[var(--background)] border-b border-[var(--border)] text-[var(--muted)] font-bold uppercase text-[10px]">
+                    <thead className="bg-background border-b border-(--border) text-(--muted) font-bold uppercase text-[10px]">
                       <tr>
                         <th className="px-6 py-4">Subject</th>
                         <th className="px-6 py-4">User</th>
@@ -265,20 +275,20 @@ export default function SupportWorkspace() {
                         <th className="px-6 py-4 text-right">Action</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[var(--border)]">
+                    <tbody className="divide-y divide-(--border)">
                       {tickets.map((ticket) => (
-                        <tr key={ticket.id} onClick={() => openTicket(ticket.id)} className="hover:bg-[var(--background)]/50 cursor-pointer transition">
-                          <td className="px-6 py-4 font-semibold text-[var(--foreground)]">{ticket.subject}</td>
-                          <td className="px-6 py-4 text-[var(--muted)]">
+                        <tr key={ticket.id} onClick={() => openTicket(ticket.id)} className="hover:bg-(--background)/50 cursor-pointer transition">
+                          <td className="px-6 py-4 font-semibold text-foreground">{ticket.subject}</td>
+                          <td className="px-6 py-4 text-(--muted)">
                             {(ticket as { profiles?: { email?: string | null } }).profiles?.email ||
                               (ticket as { user_id?: string | null }).user_id?.slice(0, 8) ||
                               'Guest'}
                           </td>
                           <td className="px-6 py-4"><Badge tone={normalizeTicketStatus(ticket.status) === 'RESOLVED' ? 'success' : 'neutral'}>{normalizeTicketStatus(ticket.status)}</Badge></td>
-                          <td className="px-6 py-4 text-right"><ArrowRight size={16} className="text-[var(--muted)] ml-auto" /></td>
+                          <td className="px-6 py-4 text-right"><ArrowRight size={16} className="text-(--muted) ml-auto" /></td>
                         </tr>
                       ))}
-                      {tickets.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-[var(--muted)]">No tickets pending.</td></tr>}
+                      {tickets.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-(--muted)">No tickets pending.</td></tr>}
                     </tbody>
                   </table>
                 )}
@@ -287,7 +297,7 @@ export default function SupportWorkspace() {
         ) : (
             <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(260px,320px)] lg:gap-5">
                 <Card className="flex min-h-[min(520px,calc(100dvh-12rem))] flex-col overflow-hidden lg:min-h-[calc(100dvh-13rem)]">
-                    <CardHeader className="flex shrink-0 flex-col gap-3 border-b border-[var(--border)] bg-[var(--background)] py-4 sm:flex-row sm:items-start sm:justify-between">
+                    <CardHeader className="flex shrink-0 flex-col gap-3 border-b border-(--border) bg-background py-4 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 flex-1 items-start gap-3">
                             <Button
                               variant="ghost"
@@ -301,7 +311,7 @@ export default function SupportWorkspace() {
                               <ArrowLeft size={18} />
                             </Button>
                             <div className="min-w-0 flex-1 space-y-2">
-                              <h2 className="text-base font-semibold text-[var(--foreground)] leading-snug">
+                              <h2 className="text-base font-semibold text-foreground leading-snug">
                                 {conversation?.ticket?.subject ?? 'Loading...'}
                               </h2>
                               <TicketUserBar
@@ -318,24 +328,24 @@ export default function SupportWorkspace() {
                           Mark Resolved
                         </Button>
                     </CardHeader>
-                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-[var(--background)]/50 p-4 sm:p-6">
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-(--background)/50 p-4 sm:p-6">
                         {normalizeThreadMessages(conversation).map((msg, i) => (
                             <div
                               key={msg.id ?? `thread-${i}`}
                               className={`flex flex-col ${msg.is_admin_reply ? 'items-end' : 'items-start'}`}
                             >
                                 <div
-                                  className={`max-w-[min(100%,42rem)] rounded-2xl px-4 py-3 text-[15px] leading-relaxed sm:text-base ${msg.is_admin_reply ? 'bg-[var(--primary)] text-white rounded-br-none' : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] rounded-bl-none'}`}
+                                  className={`max-w-[min(100%,42rem)] rounded-2xl px-4 py-3 text-[15px] leading-relaxed sm:text-base ${msg.is_admin_reply ? 'bg-(--primary) text-white rounded-br-none' : 'border border-(--border) bg-(--surface) text-foreground rounded-bl-none'}`}
                                 >
                                     {msg.message}
                                 </div>
                             </div>
                         ))}
                     </div>
-                    <form onSubmit={sendReply} className="flex shrink-0 flex-col gap-3 border-t border-[var(--border)] bg-[var(--surface)] p-4 sm:flex-row sm:items-end">
+                    <form onSubmit={sendReply} className="flex shrink-0 flex-col gap-3 border-t border-(--border) bg-(--surface) p-4 sm:flex-row sm:items-end">
                         <textarea
                           placeholder="Type your reply…"
-                          className="min-h-[120px] flex-1 resize-y rounded-[var(--radius)] border border-[var(--border)] bg-[var(--background)] px-3 py-3 text-[15px] text-[var(--foreground)] placeholder-[var(--muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] disabled:opacity-50 sm:min-h-[140px]"
+                          className="min-h-[120px] flex-1 resize-y rounded-(--radius) border border-(--border) bg-background px-3 py-3 text-[15px] text-foreground placeholder-(--muted) focus:border-(--primary) focus:outline-none focus:ring-1 focus:ring-(--primary) disabled:opacity-50 sm:min-h-[140px]"
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
                           disabled={sending}
@@ -344,7 +354,7 @@ export default function SupportWorkspace() {
                           type="submit"
                           disabled={sending}
                           size="md"
-                          className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 sm:h-[44px] sm:w-auto sm:min-w-[3.5rem] sm:self-stretch"
+                          className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 sm:h-[44px] sm:w-auto sm:min-w-14 sm:self-stretch"
                         >
                           <Send size={18} />
                           <span className="sm:sr-only">Send reply</span>
@@ -352,7 +362,7 @@ export default function SupportWorkspace() {
                     </form>
                 </Card>
                 <Card className="flex max-h-[320px] min-h-0 flex-col overflow-hidden lg:max-h-none">
-                    <CardHeader className="flex shrink-0 flex-row items-center gap-2 bg-[var(--background)] py-3 text-xs font-bold uppercase text-[var(--muted)]">
+                    <CardHeader className="flex shrink-0 flex-row items-center gap-2 bg-background py-3 text-xs font-bold uppercase text-(--muted)">
                         <RefreshCcw size={14} /> Diagnostic Sidekick
                     </CardHeader>
                     <CardContent className="min-h-0 flex-1 overflow-y-auto">
@@ -382,10 +392,10 @@ export default function SupportWorkspace() {
 
       {activeTab === 'ops' && (
         <Card className="flex-1 flex flex-col overflow-hidden min-h-0">
-             <CardHeader className="py-4 flex items-center gap-4 bg-[var(--background)]">
+             <CardHeader className="py-4 flex items-center gap-4 bg-background">
                 <form onSubmit={searchOrder} className="flex gap-2 w-full max-w-lg">
                     <Input placeholder="Order UUID or Paystack Reference..." className="flex-1 text-sm font-mono" value={orderQuery} onChange={(e) => setOrderQuery(e.target.value)} />
-                    <Button type="submit" disabled={loadingOrder} loading={loadingOrder}>Diagnose</Button>
+                    <Button type="submit" disabled={loadingOrder} loading={loadingOrder}>Lookup</Button>
                 </form>
              </CardHeader>
              <CardContent className="flex-1 overflow-y-auto">
@@ -393,12 +403,12 @@ export default function SupportWorkspace() {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                         <div>
                             <div className="mb-6">
-                                <span className={`text-2xl font-black ${order.status === 'COMPLETED' ? 'text-emerald-600' : order.status === 'CANCELLED' ? 'text-red-600' : 'text-[var(--foreground)]'}`}>{order.status}</span>
-                                <p className="text-sm text-[var(--muted)] font-mono mt-1">Ref: {order.reference}</p>
+                                <span className={`text-2xl font-black ${order.status === 'COMPLETED' ? 'text-(--success)' : order.status === 'CANCELLED' ? 'text-(--danger)' : 'text-foreground'}`}>{order.status}</span>
+                                <p className="text-sm text-(--muted) font-mono mt-1">Ref: {order.reference}</p>
                             </div>
 
                             <div className="mb-8">
-                                <h4 className="text-xs font-bold text-[var(--muted)] uppercase mb-3 flex items-center gap-2"><ShoppingBag size={12}/> Order Items</h4>
+                                <h4 className="text-xs font-bold text-(--muted) uppercase mb-3 flex items-center gap-2"><ShoppingBag size={12}/> Order Items</h4>
                                 <div className="space-y-3">
                                     {order.items?.map((item: any, i: number) => (
                                         <div key={i} className="flex items-center gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
@@ -451,7 +461,7 @@ export default function SupportWorkspace() {
                         </div>
                     </div>
                 ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-[var(--muted)]">
+                    <div className="h-full flex flex-col items-center justify-center text-(--muted)">
                         <Package size={48} className="mb-4 opacity-20" />
                         <p>Enter an Order ID above to begin diagnostics.</p>
                     </div>
@@ -506,23 +516,23 @@ function TicketUserBar({
   profile: { email?: string | null; display_name?: string | null } | null
 }) {
   if (!userId) {
-    return <p className="text-xs text-[var(--muted)]">No user linked to this ticket.</p>
+    return <p className="text-xs text-(--muted)">No user linked to this ticket.</p>
   }
 
   const usersHref = `/dashboard/users?q=${encodeURIComponent(userId)}`
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-2 rounded-lg border border-(--border) bg-(--surface) px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-start gap-2">
-        <User className="mt-0.5 h-4 w-4 shrink-0 text-[var(--muted)]" />
+        <User className="mt-0.5 h-4 w-4 shrink-0 text-(--muted)" />
         <div className="min-w-0">
           {profile?.display_name ? (
-            <p className="truncate text-sm font-medium text-[var(--foreground)]">{profile.display_name}</p>
+            <p className="truncate text-sm font-medium text-foreground">{profile.display_name}</p>
           ) : null}
           {profile?.email ? (
-            <p className="truncate text-xs text-[var(--muted)]">{profile.email}</p>
+            <p className="truncate text-xs text-(--muted)">{profile.email}</p>
           ) : (
-            <p className="font-mono text-[11px] text-[var(--muted)]" title={userId}>
+            <p className="font-mono text-[11px] text-(--muted)" title={userId}>
               {userId.slice(0, 8)}…{userId.slice(-4)}
             </p>
           )}
@@ -531,7 +541,7 @@ function TicketUserBar({
       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--foreground)] hover:bg-[var(--surface)]"
+          className="inline-flex items-center gap-1 rounded-md border border-(--border) bg-background px-2.5 py-1.5 text-[11px] font-semibold text-foreground hover:bg-(--surface)"
           onClick={() => {
             void navigator.clipboard.writeText(userId)
           }}
@@ -541,7 +551,7 @@ function TicketUserBar({
         </button>
         <Link
           href={usersHref}
-          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white hover:opacity-90"
+          className="inline-flex items-center gap-1.5 rounded-md bg-(--primary) px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white hover:opacity-90"
         >
           <ExternalLink className="h-3.5 w-3.5" />
           Open profile
@@ -549,14 +559,6 @@ function TicketUserBar({
       </div>
     </div>
   )
-}
-
-function makeIdempotencyKey(scope: string) {
-  const randomPart =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  return `${scope}-${randomPart}`
 }
 
 function normalizeTicketStatus(status: string): 'OPEN' | 'PENDING' | 'RESOLVED' | 'CLOSED' {
@@ -642,7 +644,7 @@ function CompactOrderView({ order, loading, onForce }: any) {
             </div>
             
                             {!isTerminal && (
-                                <div className="pt-4 border-t border-[var(--border)] space-y-2">
+                                <div className="pt-4 border-t border-(--border) space-y-2">
                                     <Button variant="secondary" size="sm" className="w-full" disabled={loading} onClick={() => onForce('COMPLETED')}>Force Complete</Button>
                                     <Button variant="danger" size="sm" className="w-full" disabled={loading} onClick={() => onForce('CANCELLED')}>Force Cancel</Button>
                                 </div>

@@ -74,7 +74,18 @@ export default function UserManagement() {
     setDossierLoading(true)
     setDossier(null)
     const { data } = await supabase.rpc('get_user_dossier', { p_user_id: userId })
-    if (data) setDossier(data)
+    if (data) {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('coin_balance, currency_code')
+        .eq('id', userId)
+        .maybeSingle()
+      setDossier({
+        ...data,
+        coin_balance: Number(profileData?.coin_balance ?? 0),
+        currency_code: profileData?.currency_code || 'NGN',
+      })
+    }
     setDossierLoading(false)
   }
 
@@ -191,7 +202,7 @@ export default function UserManagement() {
           )}
           <div className="flex items-center gap-1">
             <button type="button" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)} className="p-1.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none"><ChevronLeft className="h-4 w-4" /></button>
-            <span className="font-medium text-gray-700 min-w-[4rem] text-center">Page {page}</span>
+            <span className="font-medium text-gray-700 min-w-16 text-center">Page {page}</span>
             <button type="button" disabled={loading || (totalCount != null && page * pageSize >= totalCount)} onClick={() => setPage(page + 1)} className="p-1.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none"><ChevronRight className="h-4 w-4" /></button>
           </div>
         </div>
@@ -312,6 +323,7 @@ export default function UserManagement() {
                         <div className="space-y-3">
                             <h4 className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-2"><Wallet size={12}/> Financials</h4>
                             <DossierStat icon={Wallet} label="Wallet Balance" value={`₦${dossier.wallet_balance}`} color="blue" />
+                            <DossierStat icon={Wallet} label="Store Coin Balance" value={`${Number(dossier.coin_balance || 0).toLocaleString()} coins`} color="blue" />
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="bg-gray-50 p-3 rounded-lg text-center">
                                     <p className="text-[9px] text-gray-400 uppercase">Total Earned</p>

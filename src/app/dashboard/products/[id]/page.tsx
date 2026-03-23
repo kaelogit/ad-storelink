@@ -7,6 +7,9 @@ import { createClient } from '../../../../utils/supabase/client'
 import { PageHeader } from '../../../../components/admin/PageHeader'
 import { Button } from '../../../../components/ui'
 import { ArrowLeft, ExternalLink, Loader2, MapPin, User } from 'lucide-react'
+import { ActionReasonModal } from '../../../../components/admin/ActionReasonModal'
+import { ActionFeedback } from '../../../../components/admin/ActionFeedback'
+import { parseApiError } from '../../../../utils/http'
 
 const STORE_APP_BASE = process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng'
 
@@ -30,6 +33,9 @@ export default function AdminProductDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [payload, setPayload] = useState<AdminProductPayload | null>(null)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [moderateIntent, setModerateIntent] = useState<'activate' | 'deactivate' | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -60,8 +66,49 @@ export default function AdminProductDetailPage() {
 
   const product = payload?.product
   const seller = payload?.seller
+  const isActive = Boolean(product?.is_active)
   const slug = typeof product?.slug === 'string' ? product.slug : ''
   const publicUrl = slug ? `${STORE_APP_BASE.replace(/\/$/, '')}/product/${slug}` : id ? `${STORE_APP_BASE.replace(/\/$/, '')}/product/${id}` : ''
+
+  const runModeration = async ({ category, reason }: { category: string; reason: string }) => {
+    if (!product?.id || !moderateIntent) return
+    const nextActive = moderateIntent === 'activate'
+    setActionLoading(true)
+    setFeedback({ tone: 'info', message: `${nextActive ? 'Activating' : 'Deactivating'} listing...` })
+    const response = await fetch('/api/admin/products/moderate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `product-moderate-${product.id}-${nextActive ? 'active' : 'inactive'}`,
+      },
+      body: JSON.stringify({
+        productId: product.id,
+        isActive: nextActive,
+        reasonCategory: category,
+        reason,
+      }),
+    })
+    if (!response.ok) {
+      const msg = await parseApiError(response, 'Failed to moderate product.')
+      setFeedback({ tone: 'error', message: msg })
+      setActionLoading(false)
+      return
+    }
+    setPayload((prev) =>
+      prev
+        ? {
+            ...prev,
+            product: {
+              ...prev.product,
+              is_active: nextActive,
+            },
+          }
+        : prev
+    )
+    setFeedback({ tone: 'success', message: `Product ${nextActive ? 'activated' : 'deactivated'} successfully.` })
+    setModerateIntent(null)
+    setActionLoading(false)
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -87,6 +134,7 @@ export default function AdminProductDetailPage() {
         title={typeof product?.name === 'string' ? product.name : 'Product'}
         subtitle="Full record as stored in the database (admin view)."
       />
+      {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -97,6 +145,20 @@ export default function AdminProductDetailPage() {
       ) : product && seller ? (
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-4">
+            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-gray-500">Moderation:</span>
+              <button
+                type="button"
+                onClick={() => setModerateIntent(isActive ? 'deactivate' : 'activate')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+                  isActive
+                    ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                    : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                }`}
+              >
+                {isActive ? 'Deactivate listing' : 'Activate listing'}
+              </button>
+            </div>
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">Product</h3>
               <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -159,6 +221,26 @@ export default function AdminProductDetailPage() {
           </div>
         </div>
       ) : null}
+      <ActionReasonModal
+        open={moderateIntent !== null}
+        title={moderateIntent === 'deactivate' ? 'Deactivate product listing' : 'Activate product listing'}
+        description={
+          moderateIntent === 'deactivate'
+            ? 'This product will be hidden from active storefront surfaces.'
+            : 'This product will become visible in storefront surfaces again.'
+        }
+        categoryOptions={[
+          { value: 'policy_violation', label: 'Policy violation' },
+          { value: 'fraud', label: 'Fraud risk' },
+          { value: 'copyright', label: 'Copyright/IP concern' },
+          { value: 'seller_request', label: 'Seller requested action' },
+          { value: 'quality_issue', label: 'Quality/integrity issue' },
+          { value: 'other', label: 'Other' },
+        ]}
+        submitting={actionLoading}
+        onClose={() => setModerateIntent(null)}
+        onSubmit={runModeration}
+      />
     </div>
   )
 }

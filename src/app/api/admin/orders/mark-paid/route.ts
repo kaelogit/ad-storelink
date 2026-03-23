@@ -17,6 +17,7 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json()) as MarkPaidPayload
+  const idempotencyKey = request.headers.get('x-idempotency-key')?.trim()
   const orderId = body.orderId?.trim()
   const paymentReference = body.paymentReference?.trim()
 
@@ -26,10 +27,25 @@ export async function POST(request: Request) {
       { status: 400 }
     )
   }
+  if (!idempotencyKey) {
+    return NextResponse.json({ error: 'x-idempotency-key header is required' }, { status: 400 })
+  }
+
+  const { data: existingIdempotent } = await auth.supabase
+    .from('admin_audit_logs')
+    .select('id')
+    .eq('action_type', 'ORDER_INTERVENTION')
+    .eq('target_id', orderId)
+    .eq('details->>idempotencyKey', idempotencyKey)
+    .limit(1)
+    .maybeSingle()
+  if (existingIdempotent) {
+    return NextResponse.json({ ok: true, idempotent: true })
+  }
 
   const { data: order, error: orderError } = await auth.supabase
     .from('orders')
-    .select('id, status, chat_id, user_id')
+    .select('id, status, chat_id, user_id, coin_redeemed')
     .eq('id', orderId)
     .single()
 
@@ -58,6 +74,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: updateError.message }, { status: 400 })
   }
 
+  // Defensive backfill for pre-trigger orders: ensure redeemed coins are deducted once.
+  const coinsRedeemed = Number(order.coin_redeemed || 0)
+  if (coinsRedeemed > 0) {
+    const { error: coinDeductError } = await auth.supabase.rpc('deduct_coins_for_order', {
+      p_amount: coinsRedeemed,
+      p_order_id: orderId,
+      p_user_id: order.user_id,
+    })
+    if (coinDeductError && !coinDeductError.message.includes('duplicate')) {
+      return NextResponse.json({ error: coinDeductError.message }, { status: 409 })
+    }
+  }
+
   if (order.chat_id && order.user_id) {
     const orderRef = orderId.slice(0, 8).toUpperCase()
     await auth.supabase.from('messages').insert({
@@ -77,6 +106,7 @@ export async function POST(request: Request) {
       message: 'Marked as PAID (Paystack reconciliation).',
       orderId,
       paymentReference,
+      idempotencyKey,
     },
   })
 

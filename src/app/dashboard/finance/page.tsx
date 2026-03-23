@@ -29,6 +29,7 @@ export default function FinanceCenter() {
 
   const [stats, setStats] = useState<any>({ escrow_balance: 0, pending_payouts: 0, payout_count: 0 })
   const [disputes, setDisputes] = useState<any[]>([])
+  const [serviceDisputes, setServiceDisputes] = useState<any[]>([])
   const [payouts, setPayouts] = useState<any[]>([])
 
   const [selectedCase, setSelectedCase] = useState<any>(null)
@@ -47,7 +48,7 @@ export default function FinanceCenter() {
 
   const initData = async () => {
     setLoading(true)
-    await Promise.all([fetchStats(), fetchDisputes(), fetchPayouts()])
+    await Promise.all([fetchStats(), fetchDisputes(), fetchServiceDisputes(), fetchPayouts()])
     setLoading(false)
   }
 
@@ -63,6 +64,15 @@ export default function FinanceCenter() {
       .eq('status', 'open')
       .order('created_at', { ascending: false })
     if (data) setDisputes(data)
+  }
+  const fetchServiceDisputes = async () => {
+    const { data } = await supabase
+      .from('service_orders')
+      .select('id, amount_minor, currency_code, dispute_reason, dispute_state, updated_at, buyer:buyer_id(display_name), seller:seller_id(display_name)')
+      .in('dispute_state', ['under_review', 'open', 'disputed'])
+      .order('updated_at', { ascending: false })
+      .limit(100)
+    if (data) setServiceDisputes(data)
   }
 
   const fetchPayouts = async () => {
@@ -91,7 +101,7 @@ export default function FinanceCenter() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-idempotency-key': makeIdempotencyKey('payout-decision'),
+        'x-idempotency-key': `payout-decision-${payoutId}-${action}`,
       },
       body: JSON.stringify({ payoutId, action, reason, reasonCategory }),
     })
@@ -133,7 +143,7 @@ export default function FinanceCenter() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-idempotency-key': makeIdempotencyKey('dispute-verdict'),
+        'x-idempotency-key': `dispute-verdict-${selectedCase.dispute_id}-${verdict}`,
       },
       body: JSON.stringify({
         disputeId: selectedCase.dispute_id,
@@ -150,18 +160,26 @@ export default function FinanceCenter() {
       setDecisionLoading(false)
       return
     }
+    const payload = (await response.json().catch(() => ({}))) as {
+      refund?: { executed?: boolean; paystackReference?: string | null }
+      mode?: string
+    }
     setSelectedCase(null)
     setReasonModal(null)
     fetchDisputes()
     fetchStats()
-    setFeedback({ tone: 'success', message: 'Verdict delivered successfully.' })
+    const refundMsg =
+      verdict === 'refunded_buyer' && payload?.refund?.executed
+        ? ` Refund executed${payload.refund.paystackReference ? ` (${payload.refund.paystackReference})` : ''}.`
+        : ''
+    setFeedback({ tone: 'success', message: `Verdict delivered successfully.${refundMsg}`.trim() })
     setDecisionLoading(false)
   }
 
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
+        <Loader2 className="h-8 w-8 animate-spin text-(--primary)" />
       </div>
     )
   }
@@ -186,25 +204,25 @@ export default function FinanceCenter() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-5">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Escrow Vault</span>
-            <div className="rounded-full p-2 bg-blue-100 text-blue-600">
+            <span className="text-xs font-bold uppercase tracking-wider text-(--muted)">Escrow Vault</span>
+            <div className="rounded-full p-2" style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)', color: 'var(--primary)' }}>
               <Landmark className="h-4 w-4" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-[var(--foreground)]">₦{Number(stats.escrow_balance ?? 0).toLocaleString()}</p>
-          <p className="text-xs text-[var(--muted)] mt-1">Funds currently locked in trust</p>
+          <p className="text-2xl font-bold text-foreground">₦{Number(stats.escrow_balance ?? 0).toLocaleString()}</p>
+          <p className="text-xs text-(--muted) mt-1">Funds currently locked in trust</p>
         </Card>
         <Card className="p-5">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Pending Outflows</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-(--muted)">Pending Outflows</span>
             <div className="rounded-full p-2 bg-amber-100 text-amber-600">
               <TrendingUp className="h-4 w-4" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-[var(--foreground)]">₦{Number(stats.pending_payouts ?? 0).toLocaleString()}</p>
-          <p className="text-xs text-[var(--muted)] mt-1">{stats.payout_count ?? 0} requests waiting</p>
+          <p className="text-2xl font-bold text-foreground">₦{Number(stats.pending_payouts ?? 0).toLocaleString()}</p>
+          <p className="text-xs text-(--muted) mt-1">{stats.payout_count ?? 0} requests waiting</p>
         </Card>
-        <Card className="p-5 bg-[var(--foreground)] text-[var(--background)] border-0">
+        <Card className="p-5 bg-foreground text-background border-0">
           <div className="flex justify-between items-center">
             <div>
               <span className="text-xs font-bold uppercase tracking-wider opacity-80">System Health</span>
@@ -219,7 +237,7 @@ export default function FinanceCenter() {
 
       <TabsRoot>
         <Tab active={activeTab === 'tribunal'} onClick={() => setActiveTab('tribunal')}>
-          Dispute Tribunal {disputes.length > 0 && <Badge tone="neutral" className="ml-2">{disputes.length}</Badge>}
+          Dispute Tribunal {(disputes.length + serviceDisputes.length) > 0 && <Badge tone="neutral" className="ml-2">{disputes.length + serviceDisputes.length}</Badge>}
         </Tab>
         <Tab active={activeTab === 'watchtower'} onClick={() => setActiveTab('watchtower')}>
           Withdrawal Watchtower {payouts.length > 0 && <Badge tone="neutral" className="ml-2">{payouts.length}</Badge>}
@@ -230,7 +248,7 @@ export default function FinanceCenter() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card className="lg:col-span-1 overflow-hidden">
             <CardHeader className="py-3">
-              <span className="text-sm font-semibold text-[var(--foreground)]">Open disputes</span>
+              <span className="text-sm font-semibold text-foreground">Open disputes</span>
             </CardHeader>
             <CardContent className="p-0 max-h-[70vh] overflow-y-auto">
               {disputes.map((dispute) => (
@@ -238,18 +256,48 @@ export default function FinanceCenter() {
                   key={dispute.id}
                   type="button"
                   onClick={() => openCourtroom(dispute.id)}
-                  className={`w-full text-left p-4 border-b border-[var(--border)] transition-colors ${
-                    selectedCase?.dispute_id === dispute.id ? 'bg-[var(--primary)]/10 border-l-4 border-l-[var(--primary)]' : 'hover:bg-[var(--background)]'
+                  className={`w-full text-left p-4 border-b border-(--border) transition-colors ${
+                    selectedCase?.dispute_id === dispute.id ? 'bg-(--primary)/10 border-l-4 border-l-(--primary)' : 'hover:bg-background'
                   }`}
                 >
-                  <p className="font-medium text-sm text-[var(--foreground)] line-clamp-1">{dispute.reason}</p>
+                  <p className="font-medium text-sm text-foreground line-clamp-1">{dispute.reason}</p>
                   <div className="flex justify-between items-center mt-1">
-                    <span className="text-xs text-[var(--muted)]">₦{dispute.orders?.total_amount ?? 0}</span>
-                    <span className="text-[10px] text-[var(--muted)]">{new Date(dispute.created_at).toLocaleDateString()}</span>
+                    <span className="text-xs text-(--muted)">₦{dispute.orders?.total_amount ?? 0}</span>
+                    <span className="text-[10px] text-(--muted)">{new Date(dispute.created_at).toLocaleDateString()}</span>
                   </div>
                 </button>
               ))}
-              {disputes.length === 0 && <div className="p-8 text-center text-sm text-[var(--muted)]">No active disputes.</div>}
+              {disputes.length === 0 && <div className="p-8 text-center text-sm text-(--muted)">No active disputes.</div>}
+            </CardContent>
+          </Card>
+          <Card className="lg:col-span-1 overflow-hidden">
+            <CardHeader className="py-3 flex flex-row items-center justify-between">
+              <span className="text-sm font-semibold text-foreground">Service disputes</span>
+              <Link href="/dashboard/bookings">
+                <Button variant="ghost" size="sm">Open bookings desk</Button>
+              </Link>
+            </CardHeader>
+            <CardContent className="p-0 max-h-[70vh] overflow-y-auto">
+              {serviceDisputes.map((dispute) => (
+                <Link
+                  key={dispute.id}
+                  href={{ pathname: '/dashboard/bookings', query: { serviceOrderId: dispute.id } }}
+                  className="block p-4 border-b border-(--border) transition-colors hover:bg-background"
+                >
+                  <p className="font-medium text-sm text-foreground line-clamp-1">
+                    {dispute.dispute_reason || 'Service booking dispute'}
+                  </p>
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-xs text-(--muted)">
+                      {dispute.buyer?.display_name || 'Buyer'} vs {dispute.seller?.display_name || 'Seller'}
+                    </span>
+                    <span className="text-[10px] text-(--muted)">
+                      {new Date(dispute.updated_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                </Link>
+              ))}
+              {serviceDisputes.length === 0 && <div className="p-8 text-center text-sm text-(--muted)">No active service disputes.</div>}
             </CardContent>
           </Card>
 
@@ -257,36 +305,41 @@ export default function FinanceCenter() {
             {selectedCase ? (
               <Card className="flex flex-col h-[70vh] overflow-hidden">
                 {caseLoading ? (
-                  <div className="flex-1 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" /></div>
+                  <div className="flex-1 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-(--primary)" /></div>
                 ) : (
                   <>
                     <CardHeader className="flex flex-row justify-between items-center py-4">
-                      <span className="font-semibold text-[var(--foreground)] flex items-center gap-2">
+                      <span className="font-semibold text-foreground flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 text-amber-500" /> Dispute #{selectedCase.dispute_id?.slice(0, 8)}
                       </span>
                       <Badge tone="neutral">Escrow: ₦{selectedCase.amount_held}</Badge>
                     </CardHeader>
-                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-x divide-[var(--border)] overflow-hidden min-h-0">
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-x divide-(--border) overflow-hidden min-h-0">
                       <div className="p-4 overflow-y-auto">
-                        <h4 className="text-xs font-bold uppercase text-[var(--muted)] mb-2">Evidence</h4>
+                        <h4 className="text-xs font-bold uppercase text-(--muted) mb-2">Evidence</h4>
                         <p className="text-sm bg-red-50 dark:bg-red-950/30 p-3 rounded text-red-800 dark:text-red-200 mb-4">&quot;{selectedCase.reason}&quot;</p>
                         <div className="grid grid-cols-2 gap-2">
                           {selectedCase.evidence_images?.map((img: string, i: number) => (
-                            <a key={i} href={img} target="_blank" rel="noreferrer" className="rounded border border-[var(--border)] overflow-hidden">
+                            <a key={i} href={img} target="_blank" rel="noreferrer" className="rounded border border-(--border) overflow-hidden">
                               <img src={img} alt="" className="h-20 w-full object-cover" />
                             </a>
                           ))}
                         </div>
                       </div>
-                      <div className="flex flex-col bg-[var(--background)]/50 min-h-0">
-                        <div className="p-2 border-b border-[var(--border)] text-xs font-bold uppercase text-[var(--muted)] text-center">Chat log</div>
+                      <div className="flex flex-col bg-(--background)/50 min-h-0">
+                        <div className="p-2 border-b border-(--border) text-xs font-bold uppercase text-(--muted) text-center">Chat log</div>
                         <div className="flex-1 p-4 space-y-3 overflow-y-auto">
                           {(selectedCase.chat_logs ?? []).map((msg: any, i: number) => (
                             <div
                               key={i}
                               className={`text-xs p-2 rounded max-w-[85%] ${
-                                msg.role === 'buyer' ? 'bg-blue-100 dark:bg-blue-900/30 self-start' : 'bg-[var(--surface)] border border-[var(--border)] self-end ml-auto'
+                                msg.role === 'buyer' ? 'self-start' : 'bg-(--surface) border border-(--border) self-end ml-auto'
                               }`}
+                              style={
+                                msg.role === 'buyer'
+                                  ? { backgroundColor: 'color-mix(in srgb, var(--primary) 14%, transparent)' }
+                                  : undefined
+                              }
                             >
                               {msg.text || '[Image]'}
                             </div>
@@ -294,7 +347,7 @@ export default function FinanceCenter() {
                         </div>
                       </div>
                     </div>
-                    <div className="p-4 border-t border-[var(--border)] flex gap-2">
+                    <div className="p-4 border-t border-(--border) flex gap-2">
                       <Button
                         variant="danger"
                         className="flex-1"
@@ -316,7 +369,7 @@ export default function FinanceCenter() {
               </Card>
             ) : (
               <Card className="h-[70vh] flex items-center justify-center border-dashed">
-                <div className="text-center text-[var(--muted)]">
+                <div className="text-center text-(--muted)">
                   <Gavel className="h-12 w-12 mx-auto mb-2 opacity-50" />
                   <p>Select a dispute to review evidence and deliver a verdict.</p>
                 </div>
@@ -329,7 +382,7 @@ export default function FinanceCenter() {
       {activeTab === 'watchtower' && (
         <Card className="overflow-hidden">
           <CardHeader className="py-3">
-            <span className="text-sm font-semibold text-[var(--foreground)]">Pending payouts</span>
+            <span className="text-sm font-semibold text-foreground">Pending payouts</span>
           </CardHeader>
           <CardContent className="p-0">
             <DataTable>
@@ -347,16 +400,16 @@ export default function FinanceCenter() {
                   return (
                     <DataTableRow key={payout.id} className={isHighValue ? 'bg-red-50/50 dark:bg-red-950/20' : ''}>
                       <DataTableCell>
-                        <p className="font-medium text-[var(--foreground)]">{payout.profiles?.display_name || 'Unknown'}</p>
-                        <p className="text-xs text-[var(--muted)]">Req: {new Date(payout.created_at).toLocaleDateString()}</p>
+                        <p className="font-medium text-foreground">{payout.profiles?.display_name || 'Unknown'}</p>
+                        <p className="text-xs text-(--muted)">Req: {new Date(payout.created_at).toLocaleDateString()}</p>
                       </DataTableCell>
                       <DataTableCell className="text-xs">
-                        <p className="font-mono text-[var(--foreground)]">{payout.profiles?.account_number ?? '—'}</p>
-                        <p className="text-[var(--muted)]">{payout.profiles?.bank_name ?? '—'}</p>
+                        <p className="font-mono text-foreground">{payout.profiles?.account_number ?? '—'}</p>
+                        <p className="text-(--muted)">{payout.profiles?.bank_name ?? '—'}</p>
                       </DataTableCell>
                       <DataTableCell>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-[var(--foreground)]">₦{Number(payout.amount).toLocaleString()}</span>
+                          <span className="font-semibold text-foreground">₦{Number(payout.amount).toLocaleString()}</span>
                           {isHighValue && (
                             <Badge tone="danger" className="flex items-center gap-1">
                               <AlertTriangle className="h-3 w-3" /> High value
@@ -390,7 +443,7 @@ export default function FinanceCenter() {
                 })}
               </DataTableBody>
             </DataTable>
-            {payouts.length === 0 && <div className="p-12 text-center text-[var(--muted)]">All payouts processed.</div>}
+            {payouts.length === 0 && <div className="p-12 text-center text-(--muted)">All payouts processed.</div>}
           </CardContent>
         </Card>
       )}
@@ -456,10 +509,3 @@ export default function FinanceCenter() {
   )
 }
 
-function makeIdempotencyKey(scope: string) {
-  const randomPart =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  return `${scope}-${randomPart}`
-}

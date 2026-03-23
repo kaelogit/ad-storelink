@@ -63,7 +63,7 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
     <>
       {loading && list.length === 0 ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--primary)' }} />
         </div>
       ) : list.length === 0 ? (
         <EmptyState icon={ShoppingBag} message="No products match the country filter." />

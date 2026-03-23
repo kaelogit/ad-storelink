@@ -53,6 +53,12 @@ type BookingDetail = {
   policy_url?: string
 }
 
+function fromSmallestUnit(amountMinor: number, currencyCode: string): number {
+  const code = (currencyCode || 'NGN').toUpperCase()
+  const decimals = ['XOF', 'RWF'].includes(code) ? 0 : 2
+  return Number(amountMinor || 0) / Math.pow(10, decimals)
+}
+
 export default function BookingsPage() {
   const supabase = createClient()
   const { countryCode } = useCountryFilter()
@@ -84,12 +90,14 @@ export default function BookingsPage() {
     'all' | 'requested' | 'confirmed' | 'paid' | 'in_progress' | 'completed' | 'cancelled' | 'disputed' | 'refunded'
   >('all')
   const [listQuery, setListQuery] = useState('')
+  const [lastRefundRef, setLastRefundRef] = useState<string | null>(null)
 
   const searchBooking = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!query.trim()) return
     setLoading(true)
     setBooking(null)
+    setLastRefundRef(null)
     const { data, error } = await supabase.rpc('get_service_order_details_for_admin', {
       p_query: query.trim(),
     })
@@ -130,7 +138,10 @@ export default function BookingsPage() {
     setFeedback({ tone: 'info', message: `Applying ${status}...` })
     const response = await fetch('/api/admin/bookings/force-status', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `support-booking-force-status-${booking.id}-${status}`,
+      },
       body: JSON.stringify({
         serviceOrderId: booking.id,
         newStatus: status,
@@ -144,10 +155,30 @@ export default function BookingsPage() {
       setActionLoading(false)
       return
     }
+    const payload = (await response.json().catch(() => ({}))) as {
+      refund?: { executed?: boolean; orderId?: string; paystackReference?: string | null }
+      clawbackDebt?: { id?: string; amountMinor?: number; currencyCode?: string; sellerId?: string }
+      mode?: string
+    }
     const { data } = await supabase.rpc('get_service_order_details_for_admin', { p_query: booking.id })
     setBooking(data as BookingDetail)
     setPendingStatus(null)
-    setFeedback({ tone: 'success', message: `Booking status updated to ${status}.` })
+    const refundMsg =
+      status === 'refunded'
+        ? payload?.refund?.executed
+          ? ` Refund executed for order ${payload.refund.orderId?.slice(0, 8) ?? 'linked order'}.`
+          : ' Booking status changed but refund execution was not confirmed.'
+        : ''
+    const clawbackMsg =
+      status === 'refunded' && payload?.clawbackDebt?.id
+        ? ` Seller clawback debt opened: ${payload.clawbackDebt.currencyCode ?? booking.currency_code} ${fromSmallestUnit(payload.clawbackDebt.amountMinor ?? 0, payload.clawbackDebt.currencyCode ?? booking.currency_code).toLocaleString()}. Seller access is locked until repayment.`
+        : ''
+    if (status === 'refunded' && payload?.refund?.executed && payload.refund.paystackReference) {
+      setLastRefundRef(payload.refund.paystackReference)
+    } else if (status !== 'refunded') {
+      setLastRefundRef(null)
+    }
+    setFeedback({ tone: 'success', message: `Booking status updated to ${status}.${refundMsg}${clawbackMsg}`.trim() })
     setActionLoading(false)
   }
 
@@ -182,12 +213,18 @@ export default function BookingsPage() {
     if (state === 'refunded') return 'Refunded after dispute'
     return state
   }
+  const disputeReason = booking
+    ? booking.dispute_reason || getNoShowReasonFromMetadata(booking.dispute_metadata)
+    : null
+  const disputeNote = booking
+    ? booking.dispute_note || getNoShowNoteFromMetadata(booking.dispute_metadata)
+    : null
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
         title="Bookings (Service Orders)"
-        subtitle="Look up service bookings by ID or order ID. Force complete / cancel for disputes."
+        subtitle="Look up service bookings by ID or order ID. Force complete, cancel, or refund with audit reasons."
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
@@ -246,6 +283,13 @@ export default function BookingsPage() {
                         </span>
                       </div>
                     )}
+                    {lastRefundRef && (
+                      <div className="mt-2 flex items-center gap-2 rounded bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700 w-fit">
+                        <CheckCircle size={12} />
+                        <span className="font-semibold">Refund ref:</span>
+                        <span className="font-mono">{lastRefundRef}</span>
+                      </div>
+                    )}
                     {booking.policy_url && (
                       <a
                         href={booking.policy_url}
@@ -265,19 +309,19 @@ export default function BookingsPage() {
                   </div>
                 </div>
 
-              {(booking.dispute_reason || booking.dispute_note) && (
+              {(disputeReason || disputeNote) && (
                 <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-2">
                   <h3 className="text-sm font-bold text-gray-900">Dispute details</h3>
-                  {booking.dispute_reason && (
+                  {disputeReason && (
                     <p className="text-xs text-gray-700">
                       <span className="font-semibold">Reason:</span>{' '}
-                      <span className="font-mono">{booking.dispute_reason}</span>
+                      <span className="font-mono">{disputeReason}</span>
                     </p>
                   )}
-                  {booking.dispute_note && (
+                  {disputeNote && (
                     <p className="text-xs text-gray-700">
                       <span className="font-semibold">Note:</span>{' '}
-                      {booking.dispute_note}
+                      {disputeNote}
                     </p>
                   )}
                 </div>
@@ -403,7 +447,15 @@ export default function BookingsPage() {
                         className="w-full bg-red-600 text-white font-bold py-2 rounded text-xs hover:bg-red-700 transition flex items-center justify-center gap-2"
                       >
                         {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
-                        Force Cancel / Refund
+                        Force Cancel (No Refund)
+                      </button>
+                      <button
+                        disabled={actionLoading}
+                        onClick={() => setPendingStatus('refunded')}
+                        className="w-full bg-orange-600 text-white font-bold py-2 rounded text-xs hover:bg-orange-700 transition flex items-center justify-center gap-2"
+                      >
+                        {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
+                        Force Refund (Company-Funded)
                       </button>
                     </div>
                   </div>
@@ -541,12 +593,20 @@ export default function BookingsPage() {
 
       <ActionReasonModal
         open={pendingStatus !== null}
-        title={pendingStatus === 'completed' ? 'Confirm Force Complete' : 'Confirm Cancel / Refund'}
+        title={
+          pendingStatus === 'completed'
+            ? 'Confirm Force Complete'
+            : pendingStatus === 'cancelled'
+              ? 'Confirm Force Cancel'
+              : 'Confirm Force Refund'
+        }
         description="Provide a reason for this admin intervention."
         impactSummary={
           pendingStatus === 'completed'
             ? 'Booking will be marked complete; escrow 70% can be released.'
-            : 'Booking will be cancelled/refunded. Use for no-show or customer request.'
+            : pendingStatus === 'cancelled'
+              ? 'Booking will be cancelled without running a payment refund. Use for unpaid/invalid bookings.'
+              : 'Booking will be marked refunded and refund execution will be attempted. Use for approved dispute outcomes.'
         }
         categoryOptions={[
           { value: 'fraud', label: 'Fraud risk' },
@@ -566,4 +626,20 @@ export default function BookingsPage() {
       />
     </div>
   )
+}
+
+function getNoShowReasonFromMetadata(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta || typeof meta !== 'object') return null
+  const claim = (meta as { no_show_claim?: { reason?: unknown } }).no_show_claim
+  if (!claim || typeof claim !== 'object') return null
+  const raw = claim.reason
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+}
+
+function getNoShowNoteFromMetadata(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta || typeof meta !== 'object') return null
+  const claim = (meta as { no_show_claim?: { note?: unknown } }).no_show_claim
+  if (!claim || typeof claim !== 'object') return null
+  const raw = claim.note
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null
 }
