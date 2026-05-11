@@ -345,7 +345,7 @@ export default function SupportWorkspace() {
                     <form onSubmit={sendReply} className="flex shrink-0 flex-col gap-3 border-t border-(--border) bg-(--surface) p-4 sm:flex-row sm:items-end">
                         <textarea
                           placeholder="Type your reply…"
-                          className="min-h-[120px] flex-1 resize-y rounded-(--radius) border border-(--border) bg-background px-3 py-3 text-[15px] text-foreground placeholder-(--muted) focus:border-(--primary) focus:outline-none focus:ring-1 focus:ring-(--primary) disabled:opacity-50 sm:min-h-[140px]"
+                          className="min-h-30 flex-1 resize-y rounded-(--radius) border border-(--border) bg-background px-3 py-3 text-[15px] text-foreground placeholder-(--muted) focus:border-(--primary) focus:outline-none focus:ring-1 focus:ring-(--primary) disabled:opacity-50 sm:min-h-35"
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
                           disabled={sending}
@@ -354,14 +354,14 @@ export default function SupportWorkspace() {
                           type="submit"
                           disabled={sending}
                           size="md"
-                          className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 sm:h-[44px] sm:w-auto sm:min-w-14 sm:self-stretch"
+                          className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 sm:h-11 sm:w-auto sm:min-w-14 sm:self-stretch"
                         >
                           <Send size={18} />
                           <span className="sm:sr-only">Send reply</span>
                         </Button>
                     </form>
                 </Card>
-                <Card className="flex max-h-[320px] min-h-0 flex-col overflow-hidden lg:max-h-none">
+                <Card className="flex max-h-80 min-h-0 flex-col overflow-hidden lg:max-h-none">
                     <CardHeader className="flex shrink-0 flex-row items-center gap-2 bg-background py-3 text-xs font-bold uppercase text-(--muted)">
                         <RefreshCcw size={14} /> Diagnostic Sidekick
                     </CardHeader>
@@ -427,7 +427,7 @@ export default function SupportWorkspace() {
 
                             {/* TIMELINE */}
                             <div className="space-y-6 relative pl-2">
-                                <div className="absolute left-[19px] top-2 bottom-2 w-0.5 bg-gray-100"></div>
+                                <div className="absolute left-4.75 top-2 bottom-2 w-0.5 bg-gray-100"></div>
                                 <TimelineItem icon={Package} label="Created" date={order.created_at} active={true} />
                                 <TimelineItem icon={CheckCircle} label="Paid (Escrow)" date={order.created_at} active={true} />
                                 <TimelineItem icon={Truck} label="Shipped" date={order.shipped_at} active={!!order.shipped_at} />
@@ -656,7 +656,7 @@ function CompactOrderView({ order, loading, onForce }: any) {
 function TimelineItem({ icon: Icon, label, date, active, isLast, compact }: any) {
     return (
         <div className="flex gap-3 relative z-10">
-            {!isLast && <div className="absolute left-[11px] top-6 bottom-[-10px] w-0.5 bg-gray-100 -z-10"></div>}
+            {!isLast && <div className="absolute left-2.75 top-6 -bottom-2.5 w-0.5 bg-gray-100 -z-10"></div>}
             <div className={`h-6 w-6 rounded-full flex items-center justify-center border-2 shrink-0 ${active ? 'bg-purple-600 border-purple-100 text-white' : 'bg-gray-100 border-gray-200 text-gray-300'}`}>
                 <Icon size={10} />
             </div>

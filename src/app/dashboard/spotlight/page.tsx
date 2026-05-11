@@ -170,7 +170,7 @@ export default function SpotlightModerationPage() {
                       <div className="flex gap-2">
                         <span className="text-gray-700">Creator @{row.creator_slug || 'user'}</span>
                         <a
-                          href={`https://storelink.ng/spotlight/${row.spotlight_post_id}`}
+                          href={`https://storelink.ng/sp/${row.spotlight_post_id}`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 text-blue-600 hover:underline"

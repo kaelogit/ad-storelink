@@ -11,13 +11,15 @@ import {
   Search,
   Calendar,
   User,
-  MapPin,
   Package,
   Loader2,
   RefreshCcw,
   XCircle,
   CheckCircle,
   AlertTriangle,
+  MessageCircle,
+  FileText,
+  ImageIcon,
 } from 'lucide-react'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
@@ -59,6 +61,39 @@ function fromSmallestUnit(amountMinor: number, currencyCode: string): number {
   return Number(amountMinor || 0) / Math.pow(10, decimals)
 }
 
+function isActiveServiceDispute(b: BookingDetail): boolean {
+  const st = String(b.status || '').toLowerCase()
+  const ds = String(b.dispute_state || 'none').toLowerCase()
+  return st === 'disputed' || ds === 'under_review' || ds === 'disputed'
+}
+
+type DisputeChatMessageRow = {
+  message_id: string
+  conversation_id: string
+  sender_id: string | null
+  sender_display_name: string | null
+  sender_role: string | null
+  created_at: string | null
+  text: string | null
+  type: string | null
+  image_url: string | null
+  gif_url: string | null
+  audio_url: string | null
+  video_url: string | null
+  document_url: string | null
+  document_name: string | null
+  reply_to_snippet: string | null
+}
+
+function attachmentSummary(m: DisputeChatMessageRow): string | null {
+  if (m.image_url) return 'Photo'
+  if (m.gif_url) return 'GIF'
+  if (m.video_url) return 'Video'
+  if (m.audio_url) return 'Voice message'
+  if (m.document_url) return m.document_name ? `File: ${m.document_name}` : 'File'
+  return null
+}
+
 export default function BookingsPage() {
   const supabase = createClient()
   const { countryCode } = useCountryFilter()
@@ -91,6 +126,9 @@ export default function BookingsPage() {
   >('all')
   const [listQuery, setListQuery] = useState('')
   const [lastRefundRef, setLastRefundRef] = useState<string | null>(null)
+  const [disputeChatLoading, setDisputeChatLoading] = useState(false)
+  const [disputeChatMessages, setDisputeChatMessages] = useState<DisputeChatMessageRow[]>([])
+  const [disputeChatError, setDisputeChatError] = useState<string | null>(null)
 
   const searchBooking = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -98,6 +136,8 @@ export default function BookingsPage() {
     setLoading(true)
     setBooking(null)
     setLastRefundRef(null)
+    setDisputeChatMessages([])
+    setDisputeChatError(null)
     const { data, error } = await supabase.rpc('get_service_order_details_for_admin', {
       p_query: query.trim(),
     })
@@ -180,6 +220,38 @@ export default function BookingsPage() {
     }
     setFeedback({ tone: 'success', message: `Booking status updated to ${status}.${refundMsg}${clawbackMsg}`.trim() })
     setActionLoading(false)
+  }
+
+  const loadDisputeChat = async () => {
+    if (!booking?.id) return
+    setDisputeChatLoading(true)
+    setDisputeChatError(null)
+    try {
+      const res = await fetch('/api/admin/bookings/dispute-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceOrderId: booking.id }),
+      })
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: string
+        messages?: DisputeChatMessageRow[]
+      }
+      if (!res.ok) {
+        setDisputeChatError(payload.error || 'Could not load chat.')
+        setDisputeChatMessages([])
+        return
+      }
+      setDisputeChatMessages(Array.isArray(payload.messages) ? payload.messages : [])
+      setFeedback({
+        tone: 'info',
+        message: `Loaded ${payload.messages?.length ?? 0} message(s). View is audit-logged.`,
+      })
+    } catch {
+      setDisputeChatError('Network error loading chat.')
+      setDisputeChatMessages([])
+    } finally {
+      setDisputeChatLoading(false)
+    }
   }
 
   const terminalStatuses = new Set(['completed', 'cancelled', 'refunded'])
@@ -323,6 +395,79 @@ export default function BookingsPage() {
                       <span className="font-semibold">Note:</span>{' '}
                       {disputeNote}
                     </p>
+                  )}
+                </div>
+              )}
+
+              {booking.conversation_id && isActiveServiceDispute(booking) && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <MessageCircle className="h-5 w-5 text-amber-800 shrink-0 mt-0.5" />
+                    <div>
+                      <h3 className="text-sm font-bold text-amber-950">Booking chat (dispute)</h3>
+                      <p className="text-[11px] text-amber-900/90 mt-1 leading-relaxed">
+                        Load the buyer–seller thread for this booking. Access is limited to active disputes; each load is
+                        written to the audit log. Use only for resolving this case.
+                      </p>
+                      <p className="text-[10px] font-mono text-amber-800/80 mt-1 break-all">
+                        conversation_id: {booking.conversation_id}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={disputeChatLoading}
+                    onClick={() => loadDisputeChat()}
+                    className="inline-flex items-center gap-2 rounded-lg bg-amber-900 px-3 py-2 text-xs font-bold text-white hover:bg-amber-950 disabled:opacity-50"
+                  >
+                    {disputeChatLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                    Load messages
+                  </button>
+                  {disputeChatError && (
+                    <p className="text-xs font-semibold text-red-700">{disputeChatError}</p>
+                  )}
+                  {disputeChatMessages.length > 0 && (
+                    <div className="max-h-[420px] overflow-y-auto rounded-lg border border-amber-200/80 bg-white">
+                      {disputeChatMessages.map((m) => {
+                        const att = attachmentSummary(m)
+                        const when = m.created_at ? new Date(m.created_at).toLocaleString() : '—'
+                        const role = m.sender_role || '—'
+                        const body = (m.text || '').trim()
+                        return (
+                          <div
+                            key={m.message_id}
+                            className="border-b border-gray-100 px-3 py-2.5 text-xs last:border-b-0"
+                          >
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-gray-500">
+                              <span className="font-mono text-gray-400">{when}</span>
+                              <span className="rounded bg-gray-100 px-1.5 py-0.5 font-bold uppercase text-gray-700">
+                                {role}
+                              </span>
+                              <span className="font-semibold text-gray-800">{m.sender_display_name || 'Unknown'}</span>
+                            </div>
+                            {body ? (
+                              <p className="mt-1 whitespace-pre-wrap text-gray-900">{body}</p>
+                            ) : att ? (
+                              <p className="mt-1 flex items-center gap-1 text-gray-600">
+                                {m.image_url || m.gif_url ? (
+                                  <ImageIcon className="h-3.5 w-3.5" />
+                                ) : (
+                                  <FileText className="h-3.5 w-3.5" />
+                                )}
+                                {att}
+                              </p>
+                            ) : (
+                              <p className="mt-1 italic text-gray-400">[empty]</p>
+                            )}
+                            {m.reply_to_snippet ? (
+                              <p className="mt-1 border-l-2 border-gray-200 pl-2 text-[10px] text-gray-500">
+                                Replying to: {m.reply_to_snippet}
+                              </p>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
                   )}
                 </div>
               )}
@@ -559,6 +704,8 @@ export default function BookingsPage() {
                         setActiveTab('lookup')
                         setLoading(true)
                         setBooking(null)
+                        setDisputeChatMessages([])
+                        setDisputeChatError(null)
                         const { data } = await supabase.rpc('get_service_order_details_for_admin', { p_query: row.id })
                         setBooking(data as BookingDetail)
                         setLoading(false)
