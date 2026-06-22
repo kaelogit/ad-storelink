@@ -3,10 +3,14 @@
 import { useState } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { parseApiError } from '../../../utils/http'
+import { DisputeChatTranscriptPanel } from '../../../components/admin/DisputeChatTranscriptPanel'
+import { ChatCommerceLinksPanel } from '../../../components/admin/ChatCommerceLinksPanel'
+import { isActiveProductOrderDispute } from '../../../utils/disputeChat'
 import { 
   Search, Package, Truck, CheckCircle, XCircle, AlertTriangle, 
   MapPin, User, Loader2, RefreshCcw
@@ -27,7 +31,7 @@ export default function OrderOps() {
     if (!orderPayload?.id) return orderPayload
     const { data: orderCoin } = await supabase
       .from('orders')
-      .select('coin_redeemed, user_id')
+      .select('coin_redeemed, user_id, chat_id')
       .eq('id', orderPayload.id)
       .maybeSingle()
 
@@ -45,6 +49,7 @@ export default function OrderOps() {
       ...orderPayload,
       coin_redeemed: Number(orderCoin?.coin_redeemed ?? 0),
       buyer_coin_balance: buyerCoinBalance,
+      chat_id: orderCoin?.chat_id ?? null,
     }
   }
 
@@ -150,6 +155,16 @@ export default function OrderOps() {
       <PageHeader
         title="Transaction Ops"
         subtitle="Debug orders and intervene in stuck transactions."
+        actions={
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/payment-incidents', label: 'Payment incidents' },
+              { href: '/dashboard/finance', label: 'Finance' },
+              { href: '/dashboard/support', label: 'Support' },
+              { href: '/dashboard/chats', label: 'P2P chats' },
+            ]}
+          />
+        }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -203,6 +218,33 @@ export default function OrderOps() {
                     <p className="text-sm font-black text-gray-900">{Number(order.buyer_coin_balance || 0).toLocaleString()}</p>
                   </div>
                 </div>
+
+                {order.chat_id ? (
+                  <ChatCommerceLinksPanel
+                    key={`order-chat-${order.chat_id}`}
+                    chatId={order.chat_id}
+                    title="Chat commerce context"
+                    description="Orders and bookings in the same P2P thread as this order. Open P2P viewer for full transcript."
+                  />
+                ) : null}
+
+                {order.chat_id && isActiveProductOrderDispute(order) && (
+                  <DisputeChatTranscriptPanel
+                    key={order.id}
+                    title="Order chat (dispute)"
+                    description="Load the buyer–seller thread for this order. Access is limited to active disputes; each load is written to the audit log. Use only for resolving this case."
+                    conversationId={order.chat_id}
+                    entityId={order.id}
+                    endpoint="/api/admin/orders/order-chat"
+                    requestBody={{ orderId: order.id }}
+                    onLoaded={(count) =>
+                      setFeedback({
+                        tone: 'info',
+                        message: `Loaded ${count} message(s). View is audit-logged.`,
+                      })
+                    }
+                  />
+                )}
 
                 {/* The Timeline */}
                 <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">

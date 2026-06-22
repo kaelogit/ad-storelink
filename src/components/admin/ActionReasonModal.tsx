@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 type ActionReasonModalProps = {
   open: boolean
@@ -8,6 +8,8 @@ type ActionReasonModalProps = {
   description: string
   /** Short impact preview shown below description (e.g. "Funds will be released to seller.") */
   impactSummary?: string
+  /** Optional fields shown above reason category (e.g. months, reference override). */
+  extraFields?: ReactNode
   categoryOptions: { value: string; label: string }[]
   submitting?: boolean
   onClose: () => void
@@ -19,6 +21,7 @@ export function ActionReasonModal({
   title,
   description,
   impactSummary,
+  extraFields,
   categoryOptions,
   submitting = false,
   onClose,
@@ -52,6 +55,7 @@ export function ActionReasonModal({
         </div>
 
         <div className="space-y-4 px-6 py-5">
+          {extraFields}
           <div>
             <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">
               Reason category

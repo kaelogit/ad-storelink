@@ -40,6 +40,10 @@ This document is the compatibility gate for `admin-storelink`, `store-link-mobil
 - `get_daily_revenue_chart()`
 - `get_user_dossier(p_user_id)`
 - `get_order_details(p_query)`
+- `admin_get_product_order_dispute_chat(p_order_id, p_max_messages, p_override_dispute_gate)`
+- `get_admin_curation_hubs(...)`, `get_admin_curation_hub_detail(...)`, `admin_moderate_curation_hub(...)`
+- `get_admin_phone_verification_status(p_user_id)`, `admin_reset_phone_verification(p_user_id, p_reason)`
+- `get_loyalty_program_config()`, `get_admin_loyalty_sellers(...)`, `admin_update_loyalty_platform_config(...)`, `admin_update_seller_loyalty_settings(...)`
 - `get_dispute_dossier(p_dispute_id)`
 - `get_finance_overview()`
 - `get_user_id_by_email(p_email)`

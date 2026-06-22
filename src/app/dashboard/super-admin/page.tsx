@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import type { ComponentType } from 'react'
+import Link from 'next/link'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
@@ -589,13 +590,20 @@ export default function SuperAdminPage() {
         </div>
       )}
       <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm text-xs text-gray-500">
-        <p className="font-semibold text-gray-800 mb-1">Smoke tests</p>
+        <p className="font-semibold text-gray-800 mb-1">Quality & smoke tests</p>
+        <p className="mb-2">
+          Run staging smoke, volunteer E2E, and CI safety tests before risky deploys. Escrow health and runbooks live in{' '}
+          <Link href="/dashboard/safety-tests" className="font-semibold text-blue-600 hover:underline">
+            QA Hub
+          </Link>
+          .
+        </p>
         <p>
-          Run the end-to-end smoke suite from CI before risky deploys. Configure{' '}
+          Optional: set{' '}
           <code className="rounded bg-gray-50 px-1 py-0.5 text-[10px] border border-gray-200">
             NEXT_PUBLIC_SMOKE_TESTS_URL
           </code>{' '}
-          to deep-link a button here directly to your CI runs.
+          to deep-link CI runs from super-admin settings.
         </p>
       </div>
     </div>

@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { parseApiError } from '../../../utils/http'
+import { formatServiceDisputeReason } from '../../../lib/serviceDisputeReasons'
 import { Card, CardHeader, CardContent, Button, Badge } from '../../../components/ui'
 import { DataTable, DataTableHeader, DataTableBody, DataTableRow, DataTableHead, DataTableCell } from '../../../components/ui'
 import { TabsRoot, Tab } from '../../../components/ui'
@@ -19,7 +21,6 @@ import {
   Loader2,
   ArrowRight,
   Landmark,
-  FileText,
 } from 'lucide-react'
 
 export default function FinanceCenter() {
@@ -190,12 +191,14 @@ export default function FinanceCenter() {
         title="Finance Center"
         subtitle="Handle disputes, escrow, payouts and high-risk fund movements."
         actions={
-          <Link href="/dashboard/orders">
-            <Button variant="ghost" size="sm">
-              <FileText className="h-4 w-4" />
-              Order interventions
-            </Button>
-          </Link>
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/orders', label: 'Transaction Ops' },
+              { href: '/dashboard/bookings', label: 'Bookings' },
+              { href: '/dashboard/payment-incidents', label: 'Payment incidents' },
+              { href: '/dashboard/clawback-debts', label: 'Clawback' },
+            ]}
+          />
         }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
@@ -285,7 +288,7 @@ export default function FinanceCenter() {
                   className="block p-4 border-b border-(--border) transition-colors hover:bg-background"
                 >
                   <p className="font-medium text-sm text-foreground line-clamp-1">
-                    {dispute.dispute_reason || 'Service booking dispute'}
+                    {formatServiceDisputeReason(dispute.dispute_reason) || 'Service booking dispute'}
                   </p>
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-(--muted)">

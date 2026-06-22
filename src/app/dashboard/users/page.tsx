@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { createClient } from '../../../utils/supabase/client'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
@@ -12,8 +14,18 @@ import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { useTableStateFromUrl } from '../../../hooks/useTableStateFromUrl'
 import { parseApiError } from '../../../utils/http'
 import { 
-  Search, Eye, ShieldOff, UserCheck, Wallet, Loader2, Users as UsersIcon, CreditCard, MapPin, Calendar, Activity, Copy, ChevronLeft, ChevronRight
+  Search, Eye, ShieldOff, UserCheck, Wallet, Loader2, Users as UsersIcon, MapPin, Calendar, Copy, ChevronLeft, ChevronRight, MessagesSquare
 } from 'lucide-react'
+import { UserSubscriptionPanel } from '../../../components/admin/UserSubscriptionPanel'
+import { UserCoinsPanel } from '../../../components/admin/UserCoinsPanel'
+import { UserReferralPanel } from '../../../components/admin/UserReferralPanel'
+import { UserSocialEngagementPanel } from '../../../components/admin/UserSocialEngagementPanel'
+import { UserBlockedUsersPanel } from '../../../components/admin/UserBlockedUsersPanel'
+import { UserActivityFeedPanel } from '../../../components/admin/UserActivityFeedPanel'
+import { UserSellerAnalyticsPanel } from '../../../components/admin/UserSellerAnalyticsPanel'
+import { UserSellerHealthScorePanel } from '../../../components/admin/UserSellerHealthScorePanel'
+import { UserPhoneVerificationPanel } from '../../../components/admin/UserPhoneVerificationPanel'
+import type { AdminRole } from '../../../types/admin'
 
 const PAGE_SIZE = 20
 const UUID_URL_PARAM = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
@@ -32,6 +44,7 @@ export default function UserManagement() {
   const [dossierLoading, setDossierLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [pendingAccountStatus, setPendingAccountStatus] = useState<'suspended' | 'active' | null>(null)
+  const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -65,6 +78,18 @@ export default function UserManagement() {
     fetchUsers()
   }, [fetchUsers])
 
+  useEffect(() => {
+    let mounted = true
+    const loadRole = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || !mounted) return
+      const { data } = await supabase.from('admin_users').select('role').eq('id', user.id).maybeSingle()
+      if (mounted && data?.role) setAdminRole(data.role as AdminRole)
+    }
+    void loadRole()
+    return () => { mounted = false }
+  }, [supabase])
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     setQ(searchInput.trim())
@@ -75,15 +100,40 @@ export default function UserManagement() {
     setDossier(null)
     const { data } = await supabase.rpc('get_user_dossier', { p_user_id: userId })
     if (data) {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('coin_balance, currency_code')
-        .eq('id', userId)
-        .maybeSingle()
+      const [{ data: profileData }, { data: subscriptionPayments }, { data: coinLedger }, { data: referralSummary }, { data: sellerSnapshot }, { data: sellerHealth }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('coin_balance, currency_code, subscription_plan, subscription_expiry, subscription_status, prestige_weight, is_seller')
+          .eq('id', userId)
+          .maybeSingle(),
+        supabase
+          .from('coin_transactions')
+          .select('id, amount, description, created_at, type')
+          .eq('user_id', userId)
+          .eq('type', 'SUBSCRIPTION_UPGRADE')
+          .order('created_at', { ascending: false })
+          .limit(5),
+        supabase
+          .from('coin_transactions')
+          .select('id, amount, description, created_at, type')
+          .eq('user_id', userId)
+          .neq('type', 'ORDER_PAYMENT')
+          .order('created_at', { ascending: false })
+          .limit(8),
+        supabase.rpc('get_admin_referral_user_summary', { p_user_id: userId }),
+        supabase.rpc('get_admin_seller_analytics_snapshot', { p_user_id: userId }),
+        supabase.rpc('get_admin_seller_health_score', { p_user_id: userId }),
+      ])
       setDossier({
         ...data,
         coin_balance: Number(profileData?.coin_balance ?? 0),
         currency_code: profileData?.currency_code || 'NGN',
+        subscription_profile: profileData,
+        subscription_payments: subscriptionPayments ?? [],
+        coin_ledger: coinLedger ?? [],
+        referral_summary: referralSummary ?? null,
+        seller_snapshot: sellerSnapshot ?? null,
+        seller_health: sellerHealth ?? null,
       })
     }
     setDossierLoading(false)
@@ -150,6 +200,16 @@ export default function UserManagement() {
       <PageHeader
         title="User Intelligence"
         subtitle="Deep dive into user behavior, financials, and risk."
+        actions={
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/chats', label: 'P2P chats' },
+              { href: '/dashboard/content-reports', label: 'Report inbox' },
+              { href: '/dashboard/moderator', label: 'Moderation' },
+              { href: '/dashboard/referrals', label: 'Referrals' },
+            ]}
+          />
+        }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
@@ -271,6 +331,12 @@ export default function UserManagement() {
                         <button onClick={() => copyToClipboard(dossier.id)} className="mt-3 text-[10px] text-blue-500 bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1 hover:bg-blue-100">
                             ID: {dossier.id.slice(0,8)}... <Copy size={10} />
                         </button>
+                        <Link
+                          href={`/dashboard/chats?userId=${dossier.id}`}
+                          className="mt-2 text-[10px] text-amber-700 bg-amber-50 px-2 py-1 rounded inline-flex items-center gap-1 hover:bg-amber-100"
+                        >
+                          <MessagesSquare size={10} /> View P2P chats
+                        </Link>
                     </div>
 
                     <div className="grid grid-cols-3 border-b border-gray-100 divide-x divide-gray-100">
@@ -282,48 +348,71 @@ export default function UserManagement() {
                             <p className="text-[10px] font-bold text-gray-400 uppercase">Following</p>
                             <p className="text-lg font-bold text-gray-900">{dossier.following}</p>
                         </div>
-                        <div className="p-4 text-center">
+                        <Link
+                            href={`/dashboard/curations?curatorId=${dossier.id}`}
+                            className="p-4 text-center hover:bg-gray-50 transition block"
+                            title="Open curation hubs for this user"
+                        >
                             <p className="text-[10px] font-bold text-gray-400 uppercase">Curations</p>
                             <p className="text-lg font-bold text-gray-900">{dossier.curations_count}</p>
-                        </div>
+                        </Link>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
                         
-                        {/* RECENT ORDERS (The Fix for Support) */}
-                        <div>
-                            <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-3 flex items-center gap-2"><Activity size={12}/> Recent Activity</h4>
-                            <div className="space-y-2">
-                                {dossier.recent_orders?.length > 0 ? dossier.recent_orders.map((o: any) => (
-                                    <div key={o.id} className="bg-gray-50 border border-gray-100 p-3 rounded-lg flex justify-between items-center group">
-                                        <div>
-                                            <p className="text-xs font-bold text-gray-800">{o.currency_code} {o.total_amount}</p>
-                                            <p className="text-[9px] text-gray-400">{new Date(o.created_at).toLocaleDateString()} • {o.status}</p>
-                                        </div>
-                                        <button onClick={() => copyToClipboard(o.id)} className="opacity-0 group-hover:opacity-100 transition text-[10px] bg-white border border-gray-200 px-2 py-1 rounded text-gray-500 hover:text-blue-600 flex items-center gap-1">
-                                            Copy ID <Copy size={10} />
-                                        </button>
-                                    </div>
-                                )) : (
-                                    <p className="text-xs text-gray-400 italic">No recent orders found.</p>
-                                )}
-                            </div>
-                        </div>
+                        {/* Activity feed mirror (same types as mobile activity.tsx) */}
+                        <UserActivityFeedPanel key={`activity-${dossier.id}`} userId={dossier.id} />
 
-                        {/* Subscription */}
-                        <div className="bg-blue-50/50 rounded-lg p-4 border border-blue-100">
-                            <h4 className="text-[10px] font-bold text-blue-400 uppercase mb-3 flex items-center gap-2"><CreditCard size={12}/> Subscription</h4>
-                            <div className="space-y-2">
-                                <InfoRow label="Plan" value={dossier.plan_name} />
-                                <InfoRow label="Plan Time Left" value={`${dossier.plan_days_left} Days`} />
-                            </div>
-                        </div>
+                        <UserSubscriptionPanel
+                          userId={dossier.id}
+                          dossierPlanName={dossier.plan_name}
+                          dossierDaysLeft={Number(dossier.plan_days_left ?? 0)}
+                          profile={dossier.subscription_profile ?? null}
+                          payments={dossier.subscription_payments ?? []}
+                          canManage={adminRole === 'super_admin' || adminRole === 'finance'}
+                          onUpdated={() => selectUser(dossier.id)}
+                          onFeedback={setFeedback}
+                        />
+
+                        <UserCoinsPanel
+                          userId={dossier.id}
+                          coinBalance={Number(dossier.coin_balance || 0)}
+                          ledger={dossier.coin_ledger ?? []}
+                          canManage={adminRole === 'super_admin' || adminRole === 'finance' || adminRole === 'support'}
+                          onUpdated={() => selectUser(dossier.id)}
+                          onFeedback={setFeedback}
+                        />
+
+                        <UserPhoneVerificationPanel
+                          userId={dossier.id}
+                          status={dossier.phone_verification ?? null}
+                          canManage={adminRole === 'super_admin' || adminRole === 'moderator' || adminRole === 'support'}
+                          onUpdated={() => selectUser(dossier.id)}
+                          onFeedback={setFeedback}
+                        />
+
+                        <UserReferralPanel
+                          userId={dossier.id}
+                          summary={dossier.referral_summary ?? null}
+                        />
+
+                        <UserSocialEngagementPanel key={dossier.id} userId={dossier.id} />
+
+                        {(adminRole === 'super_admin' || adminRole === 'moderator' || adminRole === 'support') ? (
+                          <UserBlockedUsersPanel key={`blocks-${dossier.id}`} userId={dossier.id} />
+                        ) : null}
+
+                        <UserSellerHealthScorePanel payload={dossier.seller_health ?? null} />
+
+                        <UserSellerAnalyticsPanel
+                          userId={dossier.id}
+                          snapshot={dossier.seller_snapshot ?? null}
+                        />
 
                         {/* Financials */}
                         <div className="space-y-3">
                             <h4 className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-2"><Wallet size={12}/> Financials</h4>
                             <DossierStat icon={Wallet} label="Wallet Balance" value={`₦${dossier.wallet_balance}`} color="blue" />
-                            <DossierStat icon={Wallet} label="Store Coin Balance" value={`${Number(dossier.coin_balance || 0).toLocaleString()} coins`} color="blue" />
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="bg-gray-50 p-3 rounded-lg text-center">
                                     <p className="text-[9px] text-gray-400 uppercase">Total Earned</p>
@@ -374,15 +463,6 @@ function DossierStat({ icon: Icon, label, value, color = 'gray' }: any) {
                 <p className={`text-sm font-black ${colors[color]}`}>{value}</p>
             </div>
             <Icon size={16} className="text-gray-300" />
-        </div>
-    )
-}
-
-function InfoRow({ label, value }: { label: string, value: string }) {
-    return (
-        <div className="flex justify-between text-xs border-b border-blue-200/30 pb-1 last:border-0 last:pb-0">
-            <span className="text-blue-400 font-medium">{label}</span>
-            <span className="font-bold text-blue-900">{value}</span>
         </div>
     )
 }

@@ -3,10 +3,14 @@
 import { useState } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { parseApiError } from '../../../utils/http'
+import { ChatCommerceLinksPanel } from '../../../components/admin/ChatCommerceLinksPanel'
+import { ServiceBookingTimelinePanel, type BookingTimelinePayload } from '../../../components/admin/ServiceBookingTimelinePanel'
+import { formatServiceDisputeReason } from '../../../lib/serviceDisputeReasons'
 import {
   Search,
   Calendar,
@@ -51,6 +55,7 @@ type BookingDetail = {
     amount_minor_released_start: number
     amount_minor_released_complete: number
   }
+  booking_timeline?: BookingTimelinePayload | null
   linked_order_id: string | null
   policy_url?: string
 }
@@ -286,7 +291,7 @@ export default function BookingsPage() {
     return state
   }
   const disputeReason = booking
-    ? booking.dispute_reason || getNoShowReasonFromMetadata(booking.dispute_metadata)
+    ? formatServiceDisputeReason(booking.dispute_reason) || getNoShowReasonFromMetadata(booking.dispute_metadata)
     : null
   const disputeNote = booking
     ? booking.dispute_note || getNoShowNoteFromMetadata(booking.dispute_metadata)
@@ -297,6 +302,16 @@ export default function BookingsPage() {
       <PageHeader
         title="Bookings (Service Orders)"
         subtitle="Look up service bookings by ID or order ID. Force complete, cancel, or refund with audit reasons."
+        actions={
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/finance', label: 'Finance' },
+              { href: '/dashboard/clawback-debts', label: 'Clawback' },
+              { href: '/dashboard/payment-incidents', label: 'Payment incidents' },
+              { href: '/dashboard/chats', label: 'P2P chats' },
+            ]}
+          />
+        }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
@@ -398,6 +413,15 @@ export default function BookingsPage() {
                   )}
                 </div>
               )}
+
+              {booking.conversation_id ? (
+                <ChatCommerceLinksPanel
+                  key={`booking-chat-${booking.conversation_id}`}
+                  chatId={booking.conversation_id}
+                  title="Chat commerce context"
+                  description="Orders and bookings in the same P2P thread as this booking. Open P2P viewer for full transcript."
+                />
+              ) : null}
 
               {booking.conversation_id && isActiveServiceDispute(booking) && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 space-y-3">
@@ -515,60 +539,10 @@ export default function BookingsPage() {
                   )}
                 </div>
 
-                {booking.escrow_breakdown && (
-                  <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-3">
-                    <h3 className="text-sm font-bold text-gray-900">Escrow</h3>
-                    <p className="text-xs text-gray-600">
-                      Total: {booking.currency_code} {(booking.escrow_breakdown.amount_minor_total / 100).toLocaleString()} ·
-                      Held: {(booking.escrow_breakdown.amount_minor_held / 100).toLocaleString()} ·
-                      Released (30%): {(booking.escrow_breakdown.amount_minor_released_start / 100).toLocaleString()} ·
-                      Released (70%): {(booking.escrow_breakdown.amount_minor_released_complete / 100).toLocaleString()}
-                    </p>
-                    <div className="mt-2">
-                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest mb-1">
-                        Timeline
-                      </p>
-                      <ol className="space-y-1 text-xs text-gray-600">
-                        <li>
-                          <span className="font-semibold">Requested</span>{' '}
-                          <span className="text-gray-500">
-                            · {new Date(booking.created_at).toLocaleString()}
-                          </span>
-                        </li>
-                        {booking.scheduled_at && (
-                          <li>
-                            <span className="font-semibold">Scheduled for</span>{' '}
-                            <span className="text-gray-500">
-                              · {new Date(booking.scheduled_at).toLocaleString()}
-                            </span>
-                          </li>
-                        )}
-                        {booking.released_at_start && (
-                          <li>
-                            <span className="font-semibold">Job started (30% released)</span>{' '}
-                            <span className="text-gray-500">
-                              · {new Date(booking.released_at_start).toLocaleString()}
-                            </span>
-                          </li>
-                        )}
-                        {booking.released_at_complete && (
-                          <li>
-                            <span className="font-semibold">Completed (70% released)</span>{' '}
-                            <span className="text-gray-500">
-                              · {new Date(booking.released_at_complete).toLocaleString()}
-                            </span>
-                          </li>
-                        )}
-                        <li>
-                          <span className="font-semibold">Current status</span>{' '}
-                          <span className="text-gray-500">
-                            · {booking.status} (last update {new Date(booking.updated_at).toLocaleString()})
-                          </span>
-                        </li>
-                      </ol>
-                    </div>
-                  </div>
-                )}
+                <ServiceBookingTimelinePanel
+                  payload={booking.booking_timeline}
+                  currencyCode={booking.currency_code}
+                />
               </div>
 
               <div className="space-y-6">
@@ -777,15 +751,20 @@ export default function BookingsPage() {
 
 function getNoShowReasonFromMetadata(meta: Record<string, unknown> | null | undefined): string | null {
   if (!meta || typeof meta !== 'object') return null
-  const claim = (meta as { no_show_claim?: { reason?: unknown } }).no_show_claim
+  const claim =
+    (meta as { dispute_claim?: { reason?: unknown } }).dispute_claim ||
+    (meta as { no_show_claim?: { reason?: unknown } }).no_show_claim
   if (!claim || typeof claim !== 'object') return null
   const raw = claim.reason
-  return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  return formatServiceDisputeReason(raw.trim()) || raw.trim()
 }
 
 function getNoShowNoteFromMetadata(meta: Record<string, unknown> | null | undefined): string | null {
   if (!meta || typeof meta !== 'object') return null
-  const claim = (meta as { no_show_claim?: { note?: unknown } }).no_show_claim
+  const claim =
+    (meta as { dispute_claim?: { note?: unknown } }).dispute_claim ||
+    (meta as { no_show_claim?: { note?: unknown } }).no_show_claim
   if (!claim || typeof claim !== 'object') return null
   const raw = claim.note
   return typeof raw === 'string' && raw.trim() ? raw.trim() : null

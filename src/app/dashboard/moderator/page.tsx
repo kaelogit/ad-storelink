@@ -11,7 +11,7 @@ import { useTableStateFromUrl } from '../../../hooks/useTableStateFromUrl'
 import { parseApiError } from '../../../utils/http'
 import { TabsRoot, Tab } from '../../../components/ui'
 import { 
-  ShieldCheck, XCircle, CheckCircle, Eye, Loader2, ExternalLink, Clock, UserCheck, AlertTriangle, FileWarning, Scale
+  ShieldCheck, XCircle, CheckCircle, Eye, Loader2, ExternalLink, Clock, UserCheck, AlertTriangle, FileWarning, Scale, Inbox
 } from 'lucide-react'
 
 type ModTab = 'kyc' | 'abuse' | 'cases' | 'appeals'
@@ -313,6 +313,15 @@ export default function ModeratorPage() {
       <PageHeader
         title="Moderation Hub"
         subtitle="Review merchant verification requests and maintain platform safety."
+        actions={
+          <Link
+            href="/dashboard/content-reports"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-800 hover:bg-violet-100"
+          >
+            <Inbox className="h-4 w-4" />
+            Unified report inbox
+          </Link>
+        }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 

@@ -219,6 +219,9 @@ This guide explains how each admin role should use the new panel day‑to‑day.
 - **Prefer staging for experiments**  
   Test new flows and bulk actions in staging using seeded data before touching production.
 
+- **Feature flags (staging-first)**  
+  Use **Feature Flags** in the sidebar for `spotlight_enabled`, `buyer_follow_enabled`, `index_header_motion_v2`, and other `feature_flags` rows. Always validate on staging first, ramp rollout gradually (1% → 5% → 20%), and require an operator reason (logged as last changed by in Audit Log). Ranking v2 kill switches remain on **Experiments**.
+
 - **Use the command palette and shortcuts**  
   They exist to keep response times low, especially during incidents.
 
@@ -240,7 +243,7 @@ Use this to find where to control or inspect everything that exists in the app.
 | **Payouts** | **Finance** → Withdrawal Watchtower | Approve or reject seller payouts; see pending/paid/failed. |
 | **Support tickets** | **Support** | List tickets, open thread, **reply** as support, **resolve** or close. Search by order UUID or Paystack ref in ticket context. |
 | **Merchant verification (KYC)** | **Moderation** | Queue of verification requests; **approve** or **reject**; syncs to profile so seller can post. |
-| **Users** | **Users** | Search by email/slug; open **dossier**: profile, status, verification, subscription, orders count, **curations count**, disputes, support tickets. Suspend/activate/ban (role-dependent). |
+| **Users** | **Users** | Search by email/slug; open **dossier**: profile, status, verification, **phone verification (Termii)**, subscription, orders count, **curations count**, disputes, support tickets. Suspend/activate/ban (role-dependent). |
 | **Broadcasts & Banners** | **Content** | Send push broadcasts (segment: All/Sellers/Buyers). Create/remove in‑app banners. |
 | **Observability (errors)** | **Observability** | Recent app/admin events (info/warn/error/critical). Edge functions (e.g. paystack-webhook, cart-nudge) log failures here; use when debugging “something broke” or after function/cron failures. |
 | **Audit** | **Audit** | All admin actions (orders, payouts, support, verification, settings, staff). Filter and export. |
@@ -249,7 +252,8 @@ Use this to find where to control or inspect everything that exists in the app.
 
 **App features with no dedicated admin tab (use Users or existing pages):**
 
-- **Curation hubs** — Visible in User dossier (curations count). Content moderation is via Users + Content if you need to act on specific curations.
+- **Curation hubs** — `/dashboard/curations`: list buyer hubs from completed purchases, open public preview, hide from profile (admin override), or mark featured. User dossier curations count deep-links here.
+- **Loyalty program** — `/dashboard/loyalty`: platform max reward %, list loyalty-enabled sellers, per-seller caps; matches mobile seller Store Rewards (1/2/5%).
 - **Reels / Stories** — Product and profile content; use **Users** → dossier and **Content** (broadcasts/banners) for app-wide levers. Moderation of individual reels/stories via user context.
 - **Wishlist / Likes** — User-owned data; no admin action needed unless part of a user investigation (dossier).
 - **Loyalty / Store Coins** — Reflected in orders and coin_transactions; Finance and Orders give the money view. No separate “coins admin” page; use Users for balance context if needed.

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '../../utils/supabase/client'
 import { useCountryFilter } from '../../contexts/CountryFilterContext'
 import { PageHeader } from '../../components/admin/PageHeader'
@@ -20,10 +21,17 @@ import {
   ExternalLink,
   Package,
   Sparkles,
+  CreditCard,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
+  Inbox,
+  CalendarCheck,
 } from 'lucide-react'
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts'
+import { QA_RUNBOOKS } from '../../constants/qaRunbooks'
 
 export default function DashboardOverview() {
   const supabase = createClient()
@@ -60,6 +68,13 @@ export default function DashboardOverview() {
     seller_visits_7d: 0,
     report_sla_hours: 0,
   })
+  const [latestSmokeRun, setLatestSmokeRun] = useState<{
+    status: string
+    passed_tests: number
+    total_tests: number
+    failed_tests: number
+    created_at: string
+  } | null>(null)
 
   useEffect(() => {
     async function init() {
@@ -119,6 +134,14 @@ export default function DashboardOverview() {
         const start = Date.now()
         await supabase.from('admin_users').select('count', { count: 'exact', head: true })
         setDbLatency(Date.now() - start)
+
+        const { data: smokeData } = await supabase
+          .from('safety_test_runs')
+          .select('status, passed_tests, total_tests, failed_tests, created_at')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (smokeData) setLatestSmokeRun(smokeData)
 
         setLoading(false)
     }
@@ -348,25 +371,92 @@ export default function DashboardOverview() {
             {['super_admin', 'finance', 'support'].includes(role || '') && (
               <QuickLink href="/dashboard/orders" icon={Package} label="Transaction Ops" count={null} color="blue" />
             )}
+            {['super_admin', 'finance', 'support', 'analyst'].includes(role || '') && (
+              <QuickLink href="/dashboard/payment-incidents" icon={CreditCard} label="Payment incidents (Paystack)" count={null} color="orange" />
+            )}
+            {['super_admin', 'moderator', 'support', 'analyst', 'content'].includes(role || '') && (
+              <QuickLink href="/dashboard/content-reports" icon={Inbox} label="Content report inbox" count={null} color="red" />
+            )}
+            {['super_admin', 'finance', 'support'].includes(role || '') && (
+              <QuickLink href="/dashboard/bookings" icon={CalendarCheck} label="Service bookings" count={null} color="blue" />
+            )}
+            {['super_admin', 'analyst'].includes(role || '') && (
+              <QuickLink href="/dashboard/onboarding" icon={BarChart3} label="Onboarding funnel" count={null} color="blue" />
+            )}
             <QuickLink href="/dashboard/users" icon={Users} label="User Manager" count={null} color="blue" />
             {role === 'super_admin' && (
               <QuickLink href="/dashboard/observability" icon={Activity} label="Observability (errors)" count={null} color="blue" />
             )}
+            {['super_admin', 'analyst'].includes(role || '') && (
+              <QuickLink href="/dashboard/safety-tests" icon={ShieldCheck} label="QA Hub" count={null} color="blue" />
+            )}
           </div>
 
           <div className="mt-6 rounded-lg bg-gray-50 p-4 border border-gray-200 space-y-3">
-            <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quality gates</h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quality gates</h4>
+              {['super_admin', 'analyst'].includes(role || '') && (
+                <Link href="/dashboard/safety-tests" className="text-[10px] font-bold text-blue-600 hover:underline">
+                  Open QA Hub
+                </Link>
+              )}
+            </div>
+
+            {latestSmokeRun ? (
+              <div
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+                  latestSmokeRun.status === 'passed'
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : 'border-red-200 bg-red-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {latestSmokeRun.status === 'passed' ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-red-600" />
+                  )}
+                  <div>
+                    <p className="text-xs font-bold text-gray-900">
+                      CI safety tests: {latestSmokeRun.status === 'passed' ? 'PASS' : 'FAIL'}
+                    </p>
+                    <p className="text-[10px] text-gray-600">
+                      {latestSmokeRun.passed_tests}/{latestSmokeRun.total_tests} passed
+                      {latestSmokeRun.failed_tests > 0 ? ` · ${latestSmokeRun.failed_tests} failed` : ''}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] text-gray-500">
+                  {new Date(latestSmokeRun.created_at).toLocaleString()}
+                </span>
+              </div>
+            ) : (
+              <p className="text-[11px] text-gray-500">No CI safety runs published yet.</p>
+            )}
+
             <p className="text-[11px] text-gray-500">
-              Run the end-to-end smoke suite before pushing risky changes.
+              Run staging smoke and volunteer E2E before risky deploys. Escrow health lives in QA Hub.
             </p>
-            <a
-              href="/docs/QUALITY_AND_ROLLOUT"
-              className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition"
-            >
-              <PlayCircle className="h-4 w-4 text-green-600" />
-              Run smoke tests (read how)
-              <ExternalLink className="h-3 w-3 text-gray-400" />
-            </a>
+
+            <div className="flex flex-wrap gap-2">
+              {QA_RUNBOOKS.slice(0, 3).map((runbook) => (
+                <Link
+                  key={runbook.id}
+                  href={`/dashboard/safety-tests#${runbook.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 transition"
+                >
+                  <PlayCircle className="h-3 w-3 text-green-600" />
+                  {runbook.title}
+                </Link>
+              ))}
+              <Link
+                href="/dashboard/safety-tests"
+                className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[10px] font-semibold text-blue-800 hover:bg-blue-100 transition"
+              >
+                Full QA Hub
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            </div>
           </div>
 
           <div className="mt-4 rounded-lg bg-gray-50 p-4 border border-gray-200">

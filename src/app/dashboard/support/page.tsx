@@ -4,10 +4,14 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal'
 import { parseApiError } from '../../../utils/http'
+import { DisputeChatTranscriptPanel } from '../../../components/admin/DisputeChatTranscriptPanel'
+import { ChatCommerceLinksPanel } from '../../../components/admin/ChatCommerceLinksPanel'
+import { isActiveProductOrderDispute } from '../../../utils/disputeChat'
 import { Card, CardHeader, CardContent, Button, Badge, Input } from '../../../components/ui'
 import { TabsRoot, Tab } from '../../../components/ui'
 import {
@@ -166,14 +170,31 @@ export default function SupportWorkspace() {
   }
 
   // --- ORDER OPS LOGIC ---
+  const enrichOrderForOps = async (orderPayload: any) => {
+    if (!orderPayload?.id) return orderPayload
+    const { data: row } = await supabase
+      .from('orders')
+      .select('chat_id')
+      .eq('id', orderPayload.id)
+      .maybeSingle()
+    return {
+      ...orderPayload,
+      chat_id: row?.chat_id ?? null,
+    }
+  }
+
   const searchOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!orderQuery) return
     setLoadingOrder(true)
     setOrder(null)
     const { data } = await supabase.rpc('get_order_details', { p_query: orderQuery.trim() })
-    if (data) setOrder(data)
-    else setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
+    if (data) {
+      const enriched = await enrichOrderForOps(data)
+      setOrder(enriched)
+    } else {
+      setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
+    }
     setLoadingOrder(false)
   }
 
@@ -232,6 +253,16 @@ export default function SupportWorkspace() {
       <PageHeader
         title="Support Desk"
         subtitle="Customer care and order debugging center."
+        actions={
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/content-reports', label: 'Report inbox' },
+              { href: '/dashboard/orders', label: 'Transaction Ops' },
+              { href: '/dashboard/bookings', label: 'Bookings' },
+              { href: '/dashboard/payment-incidents', label: 'Payment incidents' },
+            ]}
+          />
+        }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
       {ticketsLoadError && (
@@ -424,6 +455,37 @@ export default function SupportWorkspace() {
                                     {(!order.items || order.items.length === 0) && <p className="text-xs text-gray-400 italic">No item details available.</p>}
                                 </div>
                             </div>
+
+                            {order.chat_id ? (
+                              <div className="mb-8">
+                                <ChatCommerceLinksPanel
+                                  key={`support-chat-${order.chat_id}`}
+                                  chatId={order.chat_id}
+                                  title="Chat commerce context"
+                                  description="Orders and bookings in the same P2P thread. Open P2P viewer for full transcript."
+                                />
+                              </div>
+                            ) : null}
+
+                            {order.chat_id && isActiveProductOrderDispute(order) && (
+                              <div className="mb-8">
+                                <DisputeChatTranscriptPanel
+                                  key={order.id}
+                                  title="Order chat (dispute)"
+                                  description="Load the buyer–seller thread linked to this order. Each load is audit-logged for dispute resolution."
+                                  conversationId={order.chat_id}
+                                  entityId={order.id}
+                                  endpoint="/api/admin/orders/order-chat"
+                                  requestBody={{ orderId: order.id }}
+                                  onLoaded={(count) =>
+                                    setFeedback({
+                                      tone: 'info',
+                                      message: `Loaded ${count} message(s). View is audit-logged.`,
+                                    })
+                                  }
+                                />
+                              </div>
+                            )}
 
                             {/* TIMELINE */}
                             <div className="space-y-6 relative pl-2">
