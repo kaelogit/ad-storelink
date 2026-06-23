@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getApiAdminContext } from '../../../../../../utils/auth/apiAdmin'
+import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
 
 export async function GET(request: Request) {
   const auth = await getApiAdminContext(['super_admin', 'moderator', 'support', 'analyst', 'content'])

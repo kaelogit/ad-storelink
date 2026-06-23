@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { getApiAdminContext } from '../../../../utils/auth/apiAdmin'
-import { createServiceSupabaseClient } from '../../../../utils/supabase/service'
+import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
+import { createServiceSupabaseClient } from '../../../../../utils/supabase/service'
 
 export async function GET() {
   const auth = await getApiAdminContext(['super_admin'])

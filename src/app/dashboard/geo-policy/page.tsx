@@ -122,6 +122,15 @@ export default function GeoPolicyPage() {
     void loadConfig()
   }, [loadConfig])
 
+  const displaySurfaces = useMemo(() => {
+    if (effectivePolicy?.surfaces?.length) return effectivePolicy.surfaces
+    return SURFACE_OPTIONS.map((surface) => ({
+      key: surface.key,
+      label: surface.label,
+      mobile: surface.help,
+    }))
+  }, [effectivePolicy?.surfaces])
+
   const dirty = useMemo(() => {
     if (!config) return false
     const pairsEqual =
@@ -197,11 +206,11 @@ export default function GeoPolicyPage() {
             <p className="font-bold">Effective policy</p>
             <p>{effectivePolicy?.description ?? 'Cross-country rules apply when viewer and seller ISO codes differ.'}</p>
             <ul className="list-inside list-disc space-y-0.5">
-              {(effectivePolicy?.surfaces ?? SURFACE_OPTIONS).map((surface) => (
+              {displaySurfaces.map((surface) => (
                 <li key={surface.key}>
                   <span className="font-semibold">{surface.label}</span>
                   {' — '}
-                  {surface.mobile ?? SURFACE_OPTIONS.find((s) => s.key === surface.key)?.help}
+                  {surface.mobile}
                 </li>
               ))}
             </ul>
