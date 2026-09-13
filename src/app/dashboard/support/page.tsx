@@ -100,13 +100,34 @@ export default function SupportWorkspace() {
     setLoadingTickets(false)
   }
 
+  const inboxTicket = tickets.find((t) => t.id === selectedTicketId) as
+    | { category?: string | null; attachment_urls?: string[] | null }
+    | undefined
+  const attachmentUrls: string[] = Array.isArray(inboxTicket?.attachment_urls)
+    ? (inboxTicket!.attachment_urls as string[]).filter(Boolean)
+    : Array.isArray((conversation as { ticket?: { attachment_urls?: string[] } } | null)?.ticket?.attachment_urls)
+      ? ((conversation as { ticket: { attachment_urls: string[] } }).ticket.attachment_urls || []).filter(Boolean)
+      : []
+
+  // Prefer inbox row (has attachment_urls from select *); fall back to conversation ticket.
   const openTicket = async (ticketId: string) => {
     setSelectedTicketId(ticketId)
     setTicketUserProfile(null)
     const { data } = await supabase.rpc('get_ticket_conversation', { p_ticket_id: ticketId })
     if (data) {
-      setConversation(data)
-      const uid = (data as { ticket?: { user_id?: string | null } }).ticket?.user_id
+      // Merge attachment_urls from inbox list if RPC omits the column
+      const fromInbox = tickets.find((t) => t.id === ticketId) as
+        | { attachment_urls?: string[] | null; category?: string | null }
+        | undefined
+      const ticket = (data as { ticket?: Record<string, unknown> }).ticket || {}
+      if (fromInbox?.attachment_urls && !(ticket as { attachment_urls?: unknown }).attachment_urls) {
+        ;(ticket as { attachment_urls?: string[] }).attachment_urls = fromInbox.attachment_urls
+      }
+      if (fromInbox?.category && !(ticket as { category?: unknown }).category) {
+        ;(ticket as { category?: string }).category = fromInbox.category
+      }
+      setConversation({ ...(data as object), ticket })
+      const uid = (ticket as { user_id?: string | null }).user_id
       if (uid) {
         const { data: prof } = await supabase
           .from('profiles')
@@ -252,11 +273,12 @@ export default function SupportWorkspace() {
     <div className="flex min-h-0 flex-1 flex-col gap-4 md:min-h-[calc(100dvh-7rem)]">
       <PageHeader
         title="Support Desk"
-        subtitle="Customer care and order debugging center."
+        subtitle="Customer care desk — look up orders, bookings, and user accounts."
         actions={
           <DeskLinkPills
             links={[
               { href: '/dashboard/content-reports', label: 'Report inbox' },
+              { href: '/dashboard/listing-integrity', label: 'Listing integrity' },
               { href: '/dashboard/orders', label: 'Transaction Ops' },
               { href: '/dashboard/bookings', label: 'Bookings' },
               { href: '/dashboard/payment-incidents', label: 'Payment incidents' },
@@ -301,6 +323,7 @@ export default function SupportWorkspace() {
                     <thead className="bg-background border-b border-(--border) text-(--muted) font-bold uppercase text-[10px]">
                       <tr>
                         <th className="px-6 py-4">Subject</th>
+                        <th className="px-6 py-4">Category</th>
                         <th className="px-6 py-4">User</th>
                         <th className="px-6 py-4">Status</th>
                         <th className="px-6 py-4 text-right">Action</th>
@@ -310,6 +333,11 @@ export default function SupportWorkspace() {
                       {tickets.map((ticket) => (
                         <tr key={ticket.id} onClick={() => openTicket(ticket.id)} className="hover:bg-(--background)/50 cursor-pointer transition">
                           <td className="px-6 py-4 font-semibold text-foreground">{ticket.subject}</td>
+                          <td className="px-6 py-4">
+                            <Badge tone={ticketCategoryTone(ticket.category)}>
+                              {ticketCategoryLabel(ticket.category)}
+                            </Badge>
+                          </td>
                           <td className="px-6 py-4 text-(--muted)">
                             {(ticket as { profiles?: { email?: string | null } }).profiles?.email ||
                               (ticket as { user_id?: string | null }).user_id?.slice(0, 8) ||
@@ -319,7 +347,7 @@ export default function SupportWorkspace() {
                           <td className="px-6 py-4 text-right"><ArrowRight size={16} className="text-(--muted) ml-auto" /></td>
                         </tr>
                       ))}
-                      {tickets.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-(--muted)">No tickets pending.</td></tr>}
+                      {tickets.length === 0 && <tr><td colSpan={5} className="p-12 text-center text-(--muted)">No tickets pending.</td></tr>}
                     </tbody>
                   </table>
                 )}
@@ -349,6 +377,11 @@ export default function SupportWorkspace() {
                                 userId={conversation?.ticket?.user_id as string | undefined}
                                 profile={ticketUserProfile}
                               />
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge tone={ticketCategoryTone(inboxTicket?.category ?? conversation?.ticket?.category)}>
+                                  {ticketCategoryLabel(inboxTicket?.category ?? conversation?.ticket?.category)}
+                                </Badge>
+                              </div>
                             </div>
                         </div>
                         <Button
@@ -360,6 +393,26 @@ export default function SupportWorkspace() {
                         </Button>
                     </CardHeader>
                     <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-(--background)/50 p-4 sm:p-6">
+                        {attachmentUrls.length > 0 ? (
+                          <div className="rounded-2xl border border-(--border) bg-(--surface) p-3">
+                            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-(--muted)">
+                              Screenshots
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {attachmentUrls.map((url) => (
+                                <a
+                                  key={url}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block h-20 w-20 overflow-hidden rounded-lg border border-(--border) bg-background"
+                                >
+                                  <img src={url} alt="Attachment" className="h-full w-full object-cover" />
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                         {normalizeThreadMessages(conversation).map((msg, i) => (
                             <div
                               key={msg.id ?? `thread-${i}`}
@@ -630,6 +683,27 @@ function normalizeTicketStatus(status: string): 'OPEN' | 'PENDING' | 'RESOLVED' 
     return upper
   }
   return 'OPEN'
+}
+
+function ticketCategoryLabel(category: string | null | undefined): string {
+  const c = (category || '').toUpperCase()
+  if (c === 'TECHNICAL') return 'Technical'
+  if (c === 'SUGGESTION') return 'Suggestion'
+  if (c === 'PAYMENT') return 'Payment'
+  if (c === 'IDENTITY') return 'Identity'
+  if (c === 'GENERAL') return 'General'
+  if (c === 'SAFETY') return 'Safety'
+  return c || 'General'
+}
+
+function ticketCategoryTone(
+  category: string | null | undefined
+): 'neutral' | 'success' | 'warning' | 'danger' {
+  const c = (category || '').toUpperCase()
+  if (c === 'SUGGESTION') return 'success'
+  if (c === 'TECHNICAL') return 'warning'
+  if (c === 'PAYMENT' || c === 'IDENTITY') return 'danger'
+  return 'neutral'
 }
 
 /** App historically stored the first user message only on support_tickets.message; thread RPC lists support_messages only. */

@@ -35,6 +35,7 @@ export default function AdminServiceListingDetailPage() {
   const [payload, setPayload] = useState<AdminServiceListingPayload | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [moderateIntent, setModerateIntent] = useState<'activate' | 'deactivate' | null>(null)
+  const [unlockIntent, setUnlockIntent] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   useEffect(() => {
@@ -67,6 +68,9 @@ export default function AdminServiceListingDetailPage() {
   const listing = payload?.listing
   const seller = payload?.seller
   const isActive = Boolean(listing?.is_active)
+  const contentLockedAt = typeof listing?.content_locked_at === 'string' ? listing.content_locked_at : null
+  const linkedPostCount =
+    typeof listing?.linked_post_count === 'number' ? listing.linked_post_count : 0
 
   const publicUrl = id ? `${STORE_APP_BASE.replace(/\/$/, '')}/service/${id}` : ''
 
@@ -107,6 +111,44 @@ export default function AdminServiceListingDetailPage() {
     )
     setFeedback({ tone: 'success', message: `Service listing ${nextActive ? 'activated' : 'deactivated'} successfully.` })
     setModerateIntent(null)
+    setActionLoading(false)
+  }
+
+  const runContentUnlock = async ({ category, reason }: { category: string; reason: string }) => {
+    if (!listing?.id) return
+    setActionLoading(true)
+    setFeedback({ tone: 'info', message: 'Removing content lock...' })
+    const response = await fetch('/api/admin/service-listings/unlock-content', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `service-unlock-${listing.id}-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        listingId: listing.id,
+        reasonCategory: category,
+        reason,
+      }),
+    })
+    if (!response.ok) {
+      const msg = await parseApiError(response, 'Failed to unlock service listing.')
+      setFeedback({ tone: 'error', message: msg })
+      setActionLoading(false)
+      return
+    }
+    setPayload((prev) =>
+      prev
+        ? {
+            ...prev,
+            listing: {
+              ...prev.listing,
+              content_locked_at: null,
+            },
+          }
+        : prev
+    )
+    setFeedback({ tone: 'success', message: 'Content lock removed. Seller can edit identity fields again.' })
+    setUnlockIntent(false)
     setActionLoading(false)
   }
 
@@ -158,6 +200,15 @@ export default function AdminServiceListingDetailPage() {
               >
                 {isActive ? 'Deactivate listing' : 'Activate listing'}
               </button>
+              {contentLockedAt ? (
+                <button
+                  type="button"
+                  onClick={() => setUnlockIntent(true)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-bold border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                >
+                  Force unlock content
+                </button>
+              ) : null}
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">Listing</h3>
@@ -176,6 +227,10 @@ export default function AdminServiceListingDetailPage() {
                 />
                 <Detail label="Location country" value={String(listing.location_country_code ?? '—')} />
                 <Detail label="Delivery type" value={String(listing.delivery_type ?? '—')} />
+                <Detail label="Content locked" value={contentLockedAt ? formatDate(contentLockedAt) : 'No'} />
+                <Detail label="Tagged posts" value={String(linkedPostCount)} />
+                <Detail label="Published" value={formatDate(listing.published_at)} />
+                <Detail label="First linked" value={formatDate(listing.first_linked_at)} />
                 <Detail label="Created" value={formatDate(listing.created_at)} />
                 <Detail label="Updated" value={formatDate(listing.updated_at)} />
               </dl>
@@ -233,6 +288,20 @@ export default function AdminServiceListingDetailPage() {
         submitting={actionLoading}
         onClose={() => setModerateIntent(null)}
         onSubmit={runModeration}
+      />
+      <ActionReasonModal
+        open={unlockIntent}
+        title="Force unlock service listing content"
+        description="Removes the listing content lock so the seller can edit title, media, menu, and description again. Use for verified support cases only."
+        categoryOptions={[
+          { value: 'seller_request', label: 'Seller support request' },
+          { value: 'quality_issue', label: 'Incorrect lock / data issue' },
+          { value: 'policy_violation', label: 'Moderation exception' },
+          { value: 'other', label: 'Other' },
+        ]}
+        submitting={actionLoading}
+        onClose={() => setUnlockIntent(false)}
+        onSubmit={runContentUnlock}
       />
     </div>
   )

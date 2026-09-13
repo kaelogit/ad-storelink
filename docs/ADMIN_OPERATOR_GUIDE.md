@@ -1,21 +1,23 @@
 ## StoreLink Admin – Role-Based Operator Guide
 
-This guide explains how each admin role should use the new panel day‑to‑day. It assumes you already have access to the admin and can log in.
+This guide explains how each admin role should use the panel day‑to‑day. It assumes you already have access to the admin and can log in.
+
+**Shell (2026-09):** Sidebar is grouped — Overview · Trust & safety · Money · Catalog · Social · Ads · Growth · Platform. On phones, use the hamburger menu. Press **Ctrl+K / Cmd+K** for the command palette. Escrow health sits on **Overview** (not only QA Hub).
 
 ---
 
 ## 1. Common concepts (all roles)
 
 - **Navigation**
-  - Left sidebar is your home base: sections for Overview, Users, Moderation, Finance, Support, Content, Settings, Super Admin (where allowed).
-  - The top header shows the current section name.
+  - Left sidebar is your home base (grouped desks). Restricted items show locked if your role cannot enter.
+  - The top header shows the current section name + country filter.
 
 - **Command palette**
   - Press **Ctrl+K / Cmd+K** anywhere to open the command palette.
-  - Start typing to jump quickly to: Users, Moderation, Finance, Support, Content, Audit Log, Observability, Super Admin, Settings.
+  - Jump to Users, Moderation, Finance, Ads, Support, Audit Log, Observability, etc.
 
 - **Audit log**
-  - Every sensitive action (suspensions, KYC decisions, disputes, payouts, settings changes, staff changes, broadcasts, banners) is logged.
+  - Every sensitive action (suspensions, KYC decisions, disputes, payouts, settings changes, staff changes, broadcasts, banners, ads moderation, feature flags) is logged.
   - `Dashboard → Audit Log`:
     - Filter by **action type**, **date range**, and **search** (email, details, target id).
     - Use **Export CSV** for compliance or investigations.
@@ -29,6 +31,7 @@ This guide explains how each admin role should use the new panel day‑to‑day.
     - A clear **reason** (typed in the modal when prompted).
     - A quick check of the **user / order / payout** context.
   - Prefer **staging** for experiments; production for real interventions only.
+  - **Analyst** role is read-only on write desks (buttons hidden; APIs also 403).
 
 ---
 
@@ -220,7 +223,7 @@ This guide explains how each admin role should use the new panel day‑to‑day.
   Test new flows and bulk actions in staging using seeded data before touching production.
 
 - **Feature flags (staging-first)**  
-  Use **Feature Flags** in the sidebar for `spotlight_enabled`, `buyer_follow_enabled`, `index_header_motion_v2`, and other `feature_flags` rows. Always validate on staging first, ramp rollout gradually (1% → 5% → 20%), and require an operator reason (logged as last changed by in Audit Log). Ranking v2 kill switches remain on **Experiments**.
+  Use **Feature Flags** in the sidebar for `spotlight_enabled`, `buyer_follow_enabled`, `index_header_motion_v2`, and other `feature_flags` rows. Always validate on staging first, ramp rollout gradually (1% → 5% → 20%), and require an operator reason (logged as last changed by in Audit Log). Ranking v2 kill switches remain on **Experiments**. Full promote path + parity export: repo `docs/FEATURE_FLAG_STAGING_PROD_PARITY.md` (#108).
 
 - **Use the command palette and shortcuts**  
   They exist to keep response times low, especially during incidents.
@@ -238,27 +241,54 @@ Use this to find where to control or inspect everything that exists in the app.
 
 | App feature | Where in admin | What you can do |
 |-------------|----------------|------------------|
-| **Orders** | **Transaction Ops** (Orders) | Search by UUID or Paystack ref; view status, chat, fulfillment. **Mark as paid** when Paystack callback failed; **Force status** (COMPLETED/CANCELLED) with reason. |
-| **Payments / Escrow** | **Finance** (Overview + Disputes) | View escrow balance, GMV, revenue. Resolve disputes (refund / release). |
+| **Orders** | **Transaction Ops** (Orders) | Search by UUID or Paystack ref; view status, chat, fulfillment. **Mark as paid** when Paystack callback failed; **Force status** (COMPLETED/CANCELLED) with reason. Browse stuck queues via **Payment incidents**. |
+| **Stuck payments** | **Payment incidents** | List webhook failures + orders stuck in `AWAITING_PAYMENT` without pasting a UUID. |
+| **Payments / Escrow** | **Finance** + Overview **Escrow health** | View escrow balance, GMV, revenue. Resolve disputes (refund / release). |
 | **Payouts** | **Finance** → Withdrawal Watchtower | Approve or reject seller payouts; see pending/paid/failed. |
+| **Bookings / services** | **Bookings** | Force status, dispute chat, clawback context. |
+| **Ads (seller Boost)** | **Ad Campaigns** | Global **ads_enabled** kill switch on the desk; approve / reject / pause / **resume** / end; issue unused credits; seller logos. Reporting desk for spend. |
+| **House ads** | **House Ads** | Publish Discover/Home banners; activate / pause / end with confirm. Requires `ads_enabled`. |
+| **Feature flags** | **Feature Flags** (+ Ads desk for ads) | Toggle product flags with reason; ads gate also on Ads desk for Super Admin. |
 | **Support tickets** | **Support** | List tickets, open thread, **reply** as support, **resolve** or close. Search by order UUID or Paystack ref in ticket context. |
-| **Merchant verification (KYC)** | **Moderation** | Queue of verification requests; **approve** or **reject**; syncs to profile so seller can post. |
+| **Merchant verification (KYC)** | **Moderation** | Queue of verification requests with profile logos; **approve** or **reject**; syncs to profile so seller can post. |
+| **Reels / Stories / Comments** | **Reels**, **Stories**, **Comments**, **Report Inbox** | Moderate social surfaces and reports. |
 | **Users** | **Users** | Search by email/slug; open **dossier**: profile, status, verification, **phone verification (Termii)**, subscription, orders count, **curations count**, disputes, support tickets. Suspend/activate/ban (role-dependent). |
 | **Broadcasts & Banners** | **Content** | Send push broadcasts (segment: All/Sellers/Buyers). Create/remove in‑app banners. |
 | **Observability (errors)** | **Observability** | Recent app/admin events (info/warn/error/critical). Edge functions (e.g. paystack-webhook, cart-nudge) log failures here; use when debugging “something broke” or after function/cron failures. |
-| **Audit** | **Audit** | All admin actions (orders, payouts, support, verification, settings, staff). Filter and export. |
+| **Audit** | **Audit** | All admin actions (orders, payouts, support, verification, settings, staff, ads). Filter and export. |
 | **Settings** | **Settings** (or Super Admin → System) | Maintenance mode, min app version (force update), **support phone**. |
-| **Staff & roles** | **Super Admin** | Invite staff (moderator, finance, support, content); suspend/activate; sessions and revoke. |
+| **Staff & roles** | **Super Admin** | Invite staff (moderator, finance, support, content, analyst); suspend/activate; sessions and revoke. |
 
 **App features with no dedicated admin tab (use Users or existing pages):**
 
 - **Curation hubs** — `/dashboard/curations`: list buyer hubs from completed purchases, open public preview, hide from profile (admin override), or mark featured. User dossier curations count deep-links here.
 - **Loyalty program** — `/dashboard/loyalty`: platform max reward %, list loyalty-enabled sellers, per-seller caps; matches mobile seller Store Rewards (1/2/5%).
-- **Reels / Stories** — Product and profile content; use **Users** → dossier and **Content** (broadcasts/banners) for app-wide levers. Moderation of individual reels/stories via user context.
+- **Reels / Stories** — Dedicated **Reels** / **Stories** desks plus Report Inbox; use Users dossier for account-level actions.
 - **Wishlist / Likes** — User-owned data; no admin action needed unless part of a user investigation (dossier).
-- **Loyalty / Store Coins** — Reflected in orders and coin_transactions; Finance and Orders give the money view. No separate “coins admin” page; use Users for balance context if needed.
+- **Loyalty / Store Coins** — **Loyalty** desk + Finance/Orders money view; Ads desk issues Boost credits as Store Coins.
 - **Blocked users** — User-level setting; view in User dossier if needed for support/safety.
-- **Follow-stores onboarding** — Onboarding flow only; no admin toggle (controlled by app/feature flags if you add them later).
+- **Follow-stores onboarding** — Controlled via Feature Flags / onboarding analytics desks.
 
 For **Paystack callback failures**: use **Transaction Ops** → search order → **Mark as paid (Paystack reference)**. See repo doc `store-link-mobile/docs/PAYSTACK_CALLBACK_FAILURE.md`.
+
+---
+
+## 10. Disaster recovery (payments & payouts)
+
+**Where:** Overview → **Disaster recovery** panel (also `docs/DISASTER_RECOVERY_RUNBOOK.md`).
+
+| Incident | Severity | One-click desk |
+|----------|----------|----------------|
+| Customer paid, order stuck `AWAITING_PAYMENT` | SEV-3 | **Transaction Ops** → Mark as paid |
+| Webhook down / error spike | SEV-1 | **Payment incidents** + **Observability** + reconcile in Transaction Ops |
+| Mass seller payouts stuck | SEV-2 | **Finance** + confirm `payout-processor` cron (OPS_DEPLOY_AND_CRON) |
+
+**Rules of thumb**
+
+- Prefer **Mark as paid** with a real Paystack reference over force-complete.
+- During a webhook outage, reconcile high-value / VIP orders first while engineering restores the function.
+- Payout queues need a live cron + **service_role** JWT — anon keys often 401.
+- Service 30/70 money lives in `service_order_payouts`; product payouts need `COMPLETED` orders.
+
+Cross-links: Payment Incidents desk, `PAYSTACK_CALLBACK_FAILURE.md`, `OPS_DEPLOY_AND_CRON.md`.
 

@@ -154,11 +154,11 @@ export default function OrderOps() {
       {/* Header & Search */}
       <PageHeader
         title="Transaction Ops"
-        subtitle="Debug orders and intervene in stuck transactions."
+        subtitle="Look up orders by UUID or Paystack ref. For stuck AWAITING_PAYMENT queues, use Payment incidents."
         actions={
           <DeskLinkPills
             links={[
-              { href: '/dashboard/payment-incidents', label: 'Payment incidents' },
+              { href: '/dashboard/payment-incidents', label: 'Stuck payments queue' },
               { href: '/dashboard/finance', label: 'Finance' },
               { href: '/dashboard/support', label: 'Support' },
               { href: '/dashboard/chats', label: 'P2P chats' },

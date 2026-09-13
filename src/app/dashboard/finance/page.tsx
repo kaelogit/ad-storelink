@@ -22,9 +22,12 @@ import {
   ArrowRight,
   Landmark,
 } from 'lucide-react'
+import { AdminAvatar } from '../../../components/admin/AdminAvatar'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 export default function FinanceCenter() {
   const supabase = createClient()
+  const { canWrite } = useAdminRole()
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'tribunal' | 'watchtower'>('tribunal')
 
@@ -61,7 +64,9 @@ export default function FinanceCenter() {
   const fetchDisputes = async () => {
     const { data } = await supabase
       .from('disputes')
-      .select('*, orders(total_amount, currency_code)')
+      .select(
+        '*, orders(total_amount, currency_code, buyer:buyer_id(display_name, logo_url), seller:seller_id(display_name, logo_url))',
+      )
       .eq('status', 'open')
       .order('created_at', { ascending: false })
     if (data) setDisputes(data)
@@ -69,7 +74,7 @@ export default function FinanceCenter() {
   const fetchServiceDisputes = async () => {
     const { data } = await supabase
       .from('service_orders')
-      .select('id, amount_minor, currency_code, dispute_reason, dispute_state, updated_at, buyer:buyer_id(display_name), seller:seller_id(display_name)')
+      .select('id, amount_minor, currency_code, dispute_reason, dispute_state, updated_at, buyer:buyer_id(display_name, logo_url), seller:seller_id(display_name, logo_url)')
       .in('dispute_state', ['under_review', 'open', 'disputed'])
       .order('updated_at', { ascending: false })
       .limit(100)
@@ -79,7 +84,7 @@ export default function FinanceCenter() {
   const fetchPayouts = async () => {
     const { data } = await supabase
       .from('payouts')
-      .select('*, profiles(display_name, bank_name, account_number)')
+      .select('*, profiles(display_name, bank_name, account_number, logo_url)')
       .eq('status', 'pending')
       .order('amount', { ascending: false })
     if (data) setPayouts(data)
@@ -265,7 +270,23 @@ export default function FinanceCenter() {
                 >
                   <p className="font-medium text-sm text-foreground line-clamp-1">{dispute.reason}</p>
                   <div className="flex justify-between items-center mt-1">
-                    <span className="text-xs text-(--muted)">₦{dispute.orders?.total_amount ?? 0}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-(--muted)">
+                      <AdminAvatar
+                        src={dispute.orders?.buyer?.logo_url}
+                        name={dispute.orders?.buyer?.display_name || 'Buyer'}
+                        className="!h-5 !w-5"
+                      />
+                      <AdminAvatar
+                        src={dispute.orders?.seller?.logo_url}
+                        name={dispute.orders?.seller?.display_name || 'Seller'}
+                        className="!h-5 !w-5"
+                      />
+                      <span>
+                        {dispute.orders?.buyer?.display_name || 'Buyer'} vs{' '}
+                        {dispute.orders?.seller?.display_name || 'Seller'} · ₦
+                        {dispute.orders?.total_amount ?? 0}
+                      </span>
+                    </span>
                     <span className="text-[10px] text-(--muted)">{new Date(dispute.created_at).toLocaleDateString()}</span>
                   </div>
                 </button>
@@ -291,7 +312,17 @@ export default function FinanceCenter() {
                     {formatServiceDisputeReason(dispute.dispute_reason) || 'Service booking dispute'}
                   </p>
                   <div className="flex justify-between items-center mt-1">
-                    <span className="text-xs text-(--muted)">
+                    <span className="flex items-center gap-1.5 text-xs text-(--muted)">
+                      <AdminAvatar
+                        src={dispute.buyer?.logo_url}
+                        name={dispute.buyer?.display_name || 'Buyer'}
+                        className="!h-5 !w-5"
+                      />
+                      <AdminAvatar
+                        src={dispute.seller?.logo_url}
+                        name={dispute.seller?.display_name || 'Seller'}
+                        className="!h-5 !w-5"
+                      />
                       {dispute.buyer?.display_name || 'Buyer'} vs {dispute.seller?.display_name || 'Seller'}
                     </span>
                     <span className="text-[10px] text-(--muted)">
@@ -351,21 +382,27 @@ export default function FinanceCenter() {
                       </div>
                     </div>
                     <div className="p-4 border-t border-(--border) flex gap-2">
-                      <Button
-                        variant="danger"
-                        className="flex-1"
-                        disabled={decisionLoading}
-                        onClick={() => setReasonModal({ kind: 'verdict', verdict: 'refunded_buyer' })}
-                      >
-                        Refund Buyer
-                      </Button>
-                      <Button
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white border-0"
-                        disabled={decisionLoading}
-                        onClick={() => setReasonModal({ kind: 'verdict', verdict: 'released_seller' })}
-                      >
-                        Release to Seller
-                      </Button>
+                      {canWrite ? (
+                        <>
+                          <Button
+                            variant="danger"
+                            className="flex-1"
+                            disabled={decisionLoading}
+                            onClick={() => setReasonModal({ kind: 'verdict', verdict: 'refunded_buyer' })}
+                          >
+                            Refund Buyer
+                          </Button>
+                          <Button
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white border-0"
+                            disabled={decisionLoading}
+                            onClick={() => setReasonModal({ kind: 'verdict', verdict: 'released_seller' })}
+                          >
+                            Release to Seller
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="w-full text-center text-xs text-(--muted)">Analyst view — verdict actions hidden</p>
+                      )}
                     </div>
                   </>
                 )}
@@ -403,8 +440,16 @@ export default function FinanceCenter() {
                   return (
                     <DataTableRow key={payout.id} className={isHighValue ? 'bg-red-50/50 dark:bg-red-950/20' : ''}>
                       <DataTableCell>
-                        <p className="font-medium text-foreground">{payout.profiles?.display_name || 'Unknown'}</p>
-                        <p className="text-xs text-(--muted)">Req: {new Date(payout.created_at).toLocaleDateString()}</p>
+                        <div className="flex items-center gap-2.5">
+                          <AdminAvatar
+                            src={payout.profiles?.logo_url}
+                            name={payout.profiles?.display_name || 'Merchant'}
+                          />
+                          <div>
+                            <p className="font-medium text-foreground">{payout.profiles?.display_name || 'Unknown'}</p>
+                            <p className="text-xs text-(--muted)">Req: {new Date(payout.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
                       </DataTableCell>
                       <DataTableCell className="text-xs">
                         <p className="font-mono text-foreground">{payout.profiles?.account_number ?? '—'}</p>
@@ -421,25 +466,29 @@ export default function FinanceCenter() {
                         </div>
                       </DataTableCell>
                       <DataTableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={decisionLoading}
-                            onClick={() => setReasonModal({ kind: 'payout', payoutId: payout.id, action: 'reject' })}
-                            className="text-red-600 hover:bg-red-50"
-                            title="Reject"
-                          >
-                            <XCircle className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            disabled={decisionLoading}
-                            onClick={() => setReasonModal({ kind: 'payout', payoutId: payout.id, action: 'approve' })}
-                          >
-                            Process <ArrowRight className="h-3 w-3 ml-1" />
-                          </Button>
-                        </div>
+                        {canWrite ? (
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={decisionLoading}
+                              onClick={() => setReasonModal({ kind: 'payout', payoutId: payout.id, action: 'reject' })}
+                              className="text-red-600 hover:bg-red-50"
+                              title="Reject"
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              disabled={decisionLoading}
+                              onClick={() => setReasonModal({ kind: 'payout', payoutId: payout.id, action: 'approve' })}
+                            >
+                              Process <ArrowRight className="h-3 w-3 ml-1" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-(--muted)">Read only</span>
+                        )}
                       </DataTableCell>
                     </DataTableRow>
                   )

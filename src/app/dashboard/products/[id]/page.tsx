@@ -35,6 +35,7 @@ export default function AdminProductDetailPage() {
   const [payload, setPayload] = useState<AdminProductPayload | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [moderateIntent, setModerateIntent] = useState<'activate' | 'deactivate' | null>(null)
+  const [unlockIntent, setUnlockIntent] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   useEffect(() => {
@@ -67,6 +68,9 @@ export default function AdminProductDetailPage() {
   const product = payload?.product
   const seller = payload?.seller
   const isActive = Boolean(product?.is_active)
+  const contentLockedAt = typeof product?.content_locked_at === 'string' ? product.content_locked_at : null
+  const linkedPostCount =
+    typeof product?.linked_post_count === 'number' ? product.linked_post_count : 0
   const slug = typeof product?.slug === 'string' ? product.slug : ''
   const publicUrl = slug ? `${STORE_APP_BASE.replace(/\/$/, '')}/product/${slug}` : id ? `${STORE_APP_BASE.replace(/\/$/, '')}/product/${id}` : ''
 
@@ -107,6 +111,44 @@ export default function AdminProductDetailPage() {
     )
     setFeedback({ tone: 'success', message: `Product ${nextActive ? 'activated' : 'deactivated'} successfully.` })
     setModerateIntent(null)
+    setActionLoading(false)
+  }
+
+  const runContentUnlock = async ({ category, reason }: { category: string; reason: string }) => {
+    if (!product?.id) return
+    setActionLoading(true)
+    setFeedback({ tone: 'info', message: 'Removing content lock...' })
+    const response = await fetch('/api/admin/products/unlock-content', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `product-unlock-${product.id}-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        productId: product.id,
+        reasonCategory: category,
+        reason,
+      }),
+    })
+    if (!response.ok) {
+      const msg = await parseApiError(response, 'Failed to unlock product listing.')
+      setFeedback({ tone: 'error', message: msg })
+      setActionLoading(false)
+      return
+    }
+    setPayload((prev) =>
+      prev
+        ? {
+            ...prev,
+            product: {
+              ...prev.product,
+              content_locked_at: null,
+            },
+          }
+        : prev
+    )
+    setFeedback({ tone: 'success', message: 'Content lock removed. Seller can edit identity fields again.' })
+    setUnlockIntent(false)
     setActionLoading(false)
   }
 
@@ -158,6 +200,15 @@ export default function AdminProductDetailPage() {
               >
                 {isActive ? 'Deactivate listing' : 'Activate listing'}
               </button>
+              {contentLockedAt ? (
+                <button
+                  type="button"
+                  onClick={() => setUnlockIntent(true)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-bold border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                >
+                  Force unlock content
+                </button>
+              ) : null}
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">Product</h3>
@@ -168,6 +219,10 @@ export default function AdminProductDetailPage() {
                 <Detail label="Price" value={String(product.price ?? '—')} />
                 <Detail label="Currency" value={String(product.currency_code ?? '—')} />
                 <Detail label="Stock" value={String(product.stock_quantity ?? '—')} />
+                <Detail label="Content locked" value={contentLockedAt ? formatDate(contentLockedAt) : 'No'} />
+                <Detail label="Tagged posts" value={String(linkedPostCount)} />
+                <Detail label="Published" value={formatDate(product.published_at)} />
+                <Detail label="First linked" value={formatDate(product.first_linked_at)} />
                 <Detail label="Location country" value={String(product.location_country ?? '—')} />
                 <Detail label="Created" value={formatDate(product.created_at)} />
               </dl>
@@ -240,6 +295,20 @@ export default function AdminProductDetailPage() {
         submitting={actionLoading}
         onClose={() => setModerateIntent(null)}
         onSubmit={runModeration}
+      />
+      <ActionReasonModal
+        open={unlockIntent}
+        title="Force unlock product content"
+        description="Removes the listing content lock so the seller can edit title, photos, and description again. Use for verified support cases only."
+        categoryOptions={[
+          { value: 'seller_request', label: 'Seller support request' },
+          { value: 'quality_issue', label: 'Incorrect lock / data issue' },
+          { value: 'policy_violation', label: 'Moderation exception' },
+          { value: 'other', label: 'Other' },
+        ]}
+        submitting={actionLoading}
+        onClose={() => setUnlockIntent(false)}
+        onSubmit={runContentUnlock}
       />
     </div>
   )

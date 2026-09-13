@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   ClipboardCheck,
   ExternalLink,
+  Play,
 } from 'lucide-react'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { EscrowHealthPanel } from '../../../components/admin/EscrowHealthPanel'
@@ -70,6 +71,8 @@ export default function QaHubPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedSuites, setExpandedSuites] = useState<Record<string, boolean>>({})
+  const [runningMode, setRunningMode] = useState<'live' | 'ci' | null>(null)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   const fetchRuns = useCallback(async () => {
     setLoading(true)
@@ -85,6 +88,37 @@ export default function QaHubPage() {
       setLoading(false)
     }
   }, [])
+
+  const runTests = async (mode: 'live' | 'ci') => {
+    setRunningMode(mode)
+    setActionMessage(null)
+    try {
+      const res = await fetch('/api/admin/safety-tests/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `safety-tests-${mode}-${Date.now()}`,
+        },
+        body: JSON.stringify({ mode }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to run tests')
+      if (mode === 'live') {
+        setActionMessage(
+          json.run?.status === 'passed'
+            ? `Live probes passed (${json.run.passed_tests}/${json.run.total_tests}).`
+            : `Live probes failed (${json.run?.failed_tests ?? 0} failed).`,
+        )
+        await fetchRuns()
+      } else {
+        setActionMessage(json.message || 'CI suite dispatched. Refresh in a minute.')
+      }
+    } catch (e) {
+      setActionMessage(e instanceof Error ? e.message : 'Failed to run tests')
+    } finally {
+      setRunningMode(null)
+    }
+  }
 
   useEffect(() => {
     fetchRuns()
@@ -113,15 +147,39 @@ export default function QaHubPage() {
         title="QA Hub"
         subtitle="Runbooks, staging smoke paths, escrow health, and CI commerce safety tests — one place before risky deploys."
         actions={
-          <button
-            type="button"
-            onClick={() => fetchRuns()}
-            className="text-sm font-medium text-[var(--primary)] hover:underline"
-          >
-            Refresh CI results
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void runTests('live')}
+              disabled={!!runningMode}
+              className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60"
+            >
+              {runningMode === 'live' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              Run live probes
+            </button>
+            <button
+              type="button"
+              onClick={() => void runTests('ci')}
+              disabled={!!runningMode}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+            >
+              {runningMode === 'ci' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              Trigger CI suite
+            </button>
+            <button
+              type="button"
+              onClick={() => fetchRuns()}
+              className="text-sm font-medium text-[var(--primary)] hover:underline"
+            >
+              Refresh results
+            </button>
+          </div>
         }
       />
+
+      {actionMessage ? (
+        <p className="rounded-lg border border-gray-100 bg-white px-4 py-3 text-sm text-gray-800">{actionMessage}</p>
+      ) : null}
 
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-[var(--foreground)]">Runbooks</h2>
@@ -159,9 +217,12 @@ export default function QaHubPage() {
 
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-[var(--foreground)]">CI safety tests</h2>
+          <h2 className="text-base font-semibold text-[var(--foreground)]">CI + live probe results</h2>
           <p className="text-xs text-[var(--muted)]">
-            Published from <code className="rounded bg-black/5 px-1">npm run test:safety:publish</code> in store-link-mobile
+            <strong>Run live probes</strong> checks taxonomy, embeddings, and DB from this desk.{' '}
+            <strong>Trigger CI suite</strong> dispatches GitHub{' '}
+            <code className="rounded bg-black/5 px-1">safety-tests.yml</code> when{' '}
+            <code className="rounded bg-black/5 px-1">GITHUB_TOKEN</code> is set.
           </p>
         </div>
 
@@ -178,10 +239,9 @@ export default function QaHubPage() {
           <Card>
             <CardContent className="py-10 text-center text-[var(--muted)]">
               <ShieldCheck className="mx-auto mb-3 h-10 w-10 opacity-40" />
-              <p className="font-medium">No safety test runs yet</p>
+              <p className="font-medium">No test runs yet</p>
               <p className="mt-1 text-sm">
-                Run <code className="rounded bg-black/5 px-1.5 py-0.5">npm run test:safety:publish</code> in
-                store-link-mobile, or wire CI secrets for automatic publishes.
+                Use <strong>Run live probes</strong> above, or trigger the Jest suite from CI.
               </p>
             </CardContent>
           </Card>

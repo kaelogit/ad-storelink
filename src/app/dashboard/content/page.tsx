@@ -8,11 +8,12 @@ import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal
 import { parseApiError } from '../../../utils/http'
 import { Card, CardHeader, CardContent, Button, Input } from '../../../components/ui'
 import { TabsRoot, Tab } from '../../../components/ui'
-import { Megaphone, Image as ImageIcon, Send, Loader2, Trash2, Plus, Smartphone, Bell } from 'lucide-react'
+import { Megaphone, Image as ImageIcon, Send, Loader2, Trash2, Plus, Smartphone, Bell, CalendarDays } from 'lucide-react'
+import { AnnouncementsCalendarPanel } from '../../../components/admin/AnnouncementsCalendarPanel'
 
 export default function ContentStudio() {
   const supabase = createClient()
-  const [activeTab, setActiveTab] = useState<'broadcast' | 'banners'>('broadcast')
+  const [activeTab, setActiveTab] = useState<'broadcast' | 'banners' | 'calendar'>('broadcast')
 
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
@@ -117,6 +118,9 @@ export default function ContentStudio() {
             <Tab active={activeTab === 'broadcast'} onClick={() => setActiveTab('broadcast')}>
               <Megaphone className="h-4 w-4 mr-1.5" /> Broadcasts
             </Tab>
+            <Tab active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')}>
+              <CalendarDays className="h-4 w-4 mr-1.5" /> Calendar
+            </Tab>
             <Tab active={activeTab === 'banners'} onClick={() => setActiveTab('banners')}>
               <ImageIcon className="h-4 w-4 mr-1.5" /> Banners
             </Tab>
@@ -153,6 +157,8 @@ export default function ContentStudio() {
         onClose={() => setPendingDeleteBanner(null)}
         onConfirm={executeDeleteBanner}
       />
+
+      {activeTab === 'calendar' && <AnnouncementsCalendarPanel />}
 
       {activeTab === 'broadcast' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

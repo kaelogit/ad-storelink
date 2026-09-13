@@ -17,7 +17,7 @@ async function run() {
 
   await mustContain(
     path.join(adminRoot, 'src', 'app', 'dashboard', 'layout.tsx'),
-    "allowedRoles: ['super_admin', 'moderator', 'finance', 'support', 'content']"
+    "allowedRoles: ['super_admin', 'moderator', 'finance', 'support', 'content', 'analyst']"
   )
 
   await mustContain(

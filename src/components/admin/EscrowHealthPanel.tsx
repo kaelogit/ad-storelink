@@ -22,19 +22,30 @@ export function EscrowHealthPanel({ compact = false }: EscrowHealthPanelProps) {
   const [finance, setFinance] = useState<FinanceOverview>({})
   const [productDisputes, setProductDisputes] = useState(0)
   const [serviceDisputes, setServiceDisputes] = useState(0)
+  const [depositBalanceDue, setDepositBalanceDue] = useState(0)
+  const [partialRefunds, setPartialRefunds] = useState(0)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
-      const [financeRes, productRes, serviceRes] = await Promise.all([
+      const [financeRes, productRes, serviceRes, depositDueRes, partialRes] = await Promise.all([
         supabase.rpc('get_finance_overview'),
         supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open'),
         supabase
           .from('service_orders')
           .select('id', { count: 'exact', head: true })
           .in('dispute_state', ['under_review', 'open', 'disputed']),
+        supabase
+          .from('service_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('payment_state', 'deposit_paid')
+          .eq('status', 'confirmed'),
+        supabase
+          .from('service_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('payment_state', 'partially_refunded'),
       ])
 
       if (cancelled) return
@@ -42,6 +53,8 @@ export function EscrowHealthPanel({ compact = false }: EscrowHealthPanelProps) {
       setFinance((financeRes.data as FinanceOverview) ?? {})
       setProductDisputes(productRes.count ?? 0)
       setServiceDisputes(serviceRes.count ?? 0)
+      setDepositBalanceDue(depositDueRes.count ?? 0)
+      setPartialRefunds(partialRes.count ?? 0)
       setLoading(false)
     }
 
@@ -52,7 +65,11 @@ export function EscrowHealthPanel({ compact = false }: EscrowHealthPanelProps) {
   }, [])
 
   const totalDisputes = productDisputes + serviceDisputes
-  const hasRisk = totalDisputes > 0 || Number(finance.pending_payouts ?? 0) > 0
+  const hasRisk =
+    totalDisputes > 0 ||
+    Number(finance.pending_payouts ?? 0) > 0 ||
+    depositBalanceDue > 0 ||
+    partialRefunds > 0
 
   if (loading) {
     return (
@@ -84,7 +101,7 @@ export function EscrowHealthPanel({ compact = false }: EscrowHealthPanelProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <dl className={`grid gap-4 ${compact ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-4'} text-sm`}>
+        <dl className={`grid gap-4 ${compact ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3'} text-sm`}>
           <div>
             <dt className="text-[var(--muted)]">Escrow balance</dt>
             <dd className="font-semibold">{formatMoney(finance.escrow_balance)}</dd>
@@ -104,6 +121,18 @@ export function EscrowHealthPanel({ compact = false }: EscrowHealthPanelProps) {
               <span className="text-xs font-normal text-[var(--muted)]">
                 ({productDisputes} product · {serviceDisputes} service)
               </span>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--muted)]">Deposit · balance due</dt>
+            <dd className={`font-semibold ${depositBalanceDue > 0 ? 'text-amber-700' : ''}`}>
+              {depositBalanceDue}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--muted)]">Partial refunds</dt>
+            <dd className={`font-semibold ${partialRefunds > 0 ? 'text-amber-700' : ''}`}>
+              {partialRefunds}
             </dd>
           </div>
         </dl>

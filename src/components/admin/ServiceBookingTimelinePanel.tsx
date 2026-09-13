@@ -60,15 +60,22 @@ type PolicyRef = {
 export type BookingTimelinePayload = {
   service_order_id?: string
   current_status?: string
+  payment_state?: string | null
+  deposit_enabled_snapshot?: boolean
+  deposit_required_minor?: number | null
+  balance_required_minor?: number | null
   steps?: TimelineStep[]
   escrow?: {
     amount_minor_total?: number
+    amount_minor_funded?: number
     amount_minor_held?: number
     amount_minor_released_start?: number
     amount_minor_released_complete?: number
+    amount_minor_clawback_cap?: number
     currency_code?: string
     released_at_start?: string | null
     released_at_complete?: string | null
+    payment_state?: string | null
   }
   linked_order?: {
     order_id?: string
@@ -76,6 +83,23 @@ export type BookingTimelinePayload = {
     payment_reference?: string | null
     paid_at?: string | null
   } | null
+  linked_orders?: Array<{
+    order_id?: string
+    status?: string
+    payment_leg?: string | null
+    total_amount?: number
+    payout_status?: string | null
+    refund_status?: string | null
+  }>
+  payment_legs?: Array<{
+    id?: string
+    leg?: string
+    order_id?: string | null
+    amount_minor?: number
+    currency_code?: string
+    status?: string
+    paid_at?: string | null
+  }>
   payout_legs?: PayoutLeg[]
   clawback_debts?: ClawbackDebt[]
   dispute?: {
@@ -114,16 +138,19 @@ export function ServiceBookingTimelinePanel({
   const escrow = payload.escrow ?? {}
   const currency = escrow.currency_code || currencyCode || 'NGN'
   const total = Number(escrow.amount_minor_total ?? 0)
+  const funded = Number(escrow.amount_minor_funded ?? total)
   const releasedStart = Number(escrow.amount_minor_released_start ?? 0)
   const releasedComplete = Number(escrow.amount_minor_released_complete ?? 0)
   const held = Number(escrow.amount_minor_held ?? 0)
-  const startPct = total > 0 ? Math.round((releasedStart / total) * 100) : 0
-  const completePct = total > 0 ? Math.round((releasedComplete / total) * 100) : 0
-  const heldPct = total > 0 ? Math.round((held / total) * 100) : 100
+  const clawbackCap = Number(escrow.amount_minor_clawback_cap ?? 0)
+  const startPct = funded > 0 ? Math.round((releasedStart / funded) * 100) : 0
+  const completePct = funded > 0 ? Math.round((releasedComplete / funded) * 100) : 0
+  const heldPct = funded > 0 ? Math.round((held / funded) * 100) : 100
 
   const dispute = payload.dispute
   const steps = payload.steps ?? []
   const payoutLegs = payload.payout_legs ?? []
+  const paymentLegs = payload.payment_legs ?? []
   const clawbacks = payload.clawback_debts ?? []
   const policies = payload.policy_refs ?? []
 
@@ -179,12 +206,20 @@ export function ServiceBookingTimelinePanel({
           </div>
           <div className="grid grid-cols-2 gap-2 text-[10px]">
             <div>
-              <span className="text-gray-500">Total</span>
+              <span className="text-gray-500">Package total</span>
               <p className="font-mono font-bold">{formatMinor(total, currency)}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">Funded (paid legs)</span>
+              <p className="font-mono font-bold">{formatMinor(funded, currency)}</p>
             </div>
             <div>
               <span className="text-gray-500">Held</span>
               <p className="font-mono font-bold text-amber-800">{formatMinor(held, currency)}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">Clawback cap</span>
+              <p className="font-mono font-bold text-rose-700">{formatMinor(clawbackCap, currency)}</p>
             </div>
             <div>
               <span className="text-gray-500">Released 30%</span>
@@ -195,6 +230,11 @@ export function ServiceBookingTimelinePanel({
               <p className="font-mono font-bold text-blue-700">{formatMinor(releasedComplete, currency)}</p>
             </div>
           </div>
+          {payload.payment_state ? (
+            <p className="text-[10px] font-bold uppercase text-slate-600">
+              Payment state · {payload.payment_state}
+            </p>
+          ) : null}
           {payload.linked_order?.order_id ? (
             <Link
               href={`/dashboard/orders?q=${encodeURIComponent(payload.linked_order.order_id)}`}
@@ -205,6 +245,29 @@ export function ServiceBookingTimelinePanel({
             </Link>
           ) : null}
         </div>
+
+        {paymentLegs.length > 0 ? (
+          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+            <p className="text-[10px] font-bold uppercase text-gray-400">Buyer payment legs</p>
+            {paymentLegs.map((leg) => (
+              <div
+                key={leg.id || `${leg.leg}-${leg.order_id}`}
+                className="flex flex-wrap justify-between gap-2 text-[10px] border-b border-gray-50 pb-2 last:border-0"
+              >
+                <div>
+                  <span className="font-bold text-gray-800 uppercase">{leg.leg}</span>
+                  <span className="text-gray-400 ml-1">· {leg.status}</span>
+                  {leg.order_id ? (
+                    <p className="font-mono text-gray-500 mt-0.5">{leg.order_id.slice(0, 8)}…</p>
+                  ) : null}
+                </div>
+                <p className="font-mono font-bold text-gray-900">
+                  {formatMinor(leg.amount_minor, leg.currency_code || currency)}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {payoutLegs.length > 0 ? (
           <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">

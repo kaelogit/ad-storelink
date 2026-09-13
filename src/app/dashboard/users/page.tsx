@@ -22,6 +22,7 @@ import { UserReferralPanel } from '../../../components/admin/UserReferralPanel'
 import { UserSocialEngagementPanel } from '../../../components/admin/UserSocialEngagementPanel'
 import { UserBlockedUsersPanel } from '../../../components/admin/UserBlockedUsersPanel'
 import { UserActivityFeedPanel } from '../../../components/admin/UserActivityFeedPanel'
+import { UserTrustTimelinePanel } from '../../../components/admin/UserTrustTimelinePanel'
 import { UserSellerAnalyticsPanel } from '../../../components/admin/UserSellerAnalyticsPanel'
 import { UserSellerHealthScorePanel } from '../../../components/admin/UserSellerHealthScorePanel'
 import { UserPhoneVerificationPanel } from '../../../components/admin/UserPhoneVerificationPanel'
@@ -361,6 +362,7 @@ export default function UserManagement() {
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
                         
                         {/* Activity feed mirror (same types as mobile activity.tsx) */}
+                        <UserTrustTimelinePanel key={`trust-${dossier.id}`} userId={dossier.id} />
                         <UserActivityFeedPanel key={`activity-${dossier.id}`} userId={dossier.id} />
 
                         <UserSubscriptionPanel

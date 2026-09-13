@@ -155,6 +155,12 @@ export default function FeatureFlagsPage() {
           <li>For ranking v2 kill switch / experiment freeze, use <Link href="/dashboard/experiments" className="font-bold underline">Experiments</Link>.</li>
           <li>Production rollback: set <code className="font-mono">enabled=false</code> or rollout <code className="font-mono">0%</code>.</li>
         </ol>
+        <p className="text-blue-800 pt-1">
+          Full staging ↔ prod checklist (migrations, parity export, ramp):{' '}
+          <span className="font-mono text-[10px]">docs/FEATURE_FLAG_STAGING_PROD_PARITY.md</span>
+          {' '}· ranking:{' '}
+          <span className="font-mono text-[10px]">RANKING_V2_ROLLOUT_CHECKLIST.md</span>
+        </p>
       </div>
 
       {!canEdit ? (

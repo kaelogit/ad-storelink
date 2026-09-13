@@ -35,7 +35,7 @@ test.describe('admin new flows smoke', () => {
     await page.goto('/dashboard/settings')
     await expect(page.getByText('System Configuration')).toBeVisible()
     await expect(page.getByText(/Maintenance mode/i)).toBeVisible()
-    await expect(page.getByText(/Force update/i)).toBeVisible()
+    await expect(page.getByText(/App store releases/i)).toBeVisible()
   })
 
   test('audit page loads and CSV export button is visible', async ({ page }) => {

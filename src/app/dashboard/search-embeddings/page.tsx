@@ -30,7 +30,7 @@ export default function SearchEmbeddingsPage() {
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
   const [coverage, setCoverage] = useState<Coverage | null>(null)
   const [loading, setLoading] = useState(true)
-  const [running, setRunning] = useState<'products' | 'services' | 'both' | null>(null)
+  const [running, setRunning] = useState<'products' | 'services' | 'both' | 'keep' | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   const canRun = adminRole === 'super_admin'
@@ -69,7 +69,10 @@ export default function SearchEmbeddingsPage() {
     else setLoading(false)
   }, [canRun, loadCoverage])
 
-  const runBatch = async (target: 'products' | 'services' | 'both', batches = 1) => {
+  const runBatch = async (
+    target: 'products' | 'services' | 'both',
+    batches = 1,
+  ): Promise<RunResult | null> => {
     setRunning(target)
     setFeedback({ tone: 'info', message: `Running ${target} embedding batch…` })
 
@@ -85,7 +88,7 @@ export default function SearchEmbeddingsPage() {
     if (!response.ok) {
       setFeedback({ tone: 'error', message: await parseApiError(response, 'Embedding run failed.') })
       setRunning(null)
-      return
+      return null
     }
 
     const payload = (await response.json()) as RunResult
@@ -101,6 +104,61 @@ export default function SearchEmbeddingsPage() {
         payload.totalProcessed > 0
           ? `Embedded ${payload.totalProcessed} item(s). ${detail}`
           : `Nothing left to embed for that run. ${detail || 'Catalog may be empty or already caught up.'}`,
+    })
+    setRunning(null)
+    return payload
+  }
+
+  const keepEmbedding = async () => {
+    setRunning('keep')
+    let total = 0
+    const maxLoops = 30
+
+    for (let i = 0; i < maxLoops; i += 1) {
+      setFeedback({
+        tone: 'info',
+        message: `Keeping embeddings current… batch ${i + 1}/${maxLoops}`,
+      })
+
+      const response = await fetch('/api/admin/search-embeddings/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `search-embeddings-keep-${Date.now()}-${i}`,
+        },
+        body: JSON.stringify({ target: 'both', limit: 50, batches: 1 }),
+      })
+
+      if (!response.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(response, 'Embedding run failed.') })
+        setRunning(null)
+        return
+      }
+
+      const payload = (await response.json()) as RunResult
+      if (payload.coverage) setCoverage(payload.coverage)
+      total += payload.totalProcessed ?? 0
+
+      const missing =
+        (payload.coverage?.missing_products ?? 0) + (payload.coverage?.missing_services ?? 0)
+      const hadError = payload.results.some((row) => !!row.error)
+      if (hadError || payload.totalProcessed === 0 || missing === 0) {
+        setFeedback({
+          tone: hadError ? 'error' : 'success',
+          message: hadError
+            ? `Stopped after an embedding error. Embedded ${total} item(s) this session.`
+            : missing === 0
+              ? `Catalog is caught up. Embedded ${total} item(s) this session.`
+              : `Nothing left in the queue. Embedded ${total} item(s) this session.`,
+        })
+        setRunning(null)
+        return
+      }
+    }
+
+    setFeedback({
+      tone: 'info',
+      message: `Paused after ${maxLoops} batches (${total} embedded). Click again if Missing is still above zero.`,
     })
     setRunning(null)
   }
@@ -170,10 +228,17 @@ export default function SearchEmbeddingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-gray-600">
-            Each click processes up to 50 listings that are missing embeddings. Run again while{' '}
-            <strong>Missing</strong> is above zero — especially after sellers add new products or services.
+            Each click processes up to 50 listings that are missing embeddings.{' '}
+            <strong>Keep embedding until caught up</strong> loops until Missing is zero (or 30 batches).
+            Hourly cron also backfills in the background once enabled.
           </p>
           <div className="flex flex-wrap gap-3">
+            <RunButton
+              label="Keep embedding until caught up"
+              loading={running === 'keep'}
+              disabled={!!running}
+              onClick={() => void keepEmbedding()}
+            />
             <RunButton
               label="Embed 50 products"
               loading={running === 'products'}
@@ -203,7 +268,7 @@ export default function SearchEmbeddingsPage() {
           <ul className="list-disc space-y-1 pl-5 text-xs text-gray-500">
             <li>Requires <code>SUPABASE_SERVICE_ROLE_KEY</code> on the admin server.</li>
             <li>Edge functions must be deployed: <code>generate-product-embeddings</code>, <code>generate-service-embeddings</code>.</li>
-            <li>New listings stay on keyword search until you run a batch here (automatic cron is backlog #102).</li>
+            <li>Hourly cron: products at :10 UTC, services at :25 UTC. Use the keep button after a big catalog dump.</li>
           </ul>
         </CardContent>
       </Card>

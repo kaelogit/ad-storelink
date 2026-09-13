@@ -14,7 +14,6 @@ import { formatServiceDisputeReason } from '../../../lib/serviceDisputeReasons'
 import {
   Search,
   Calendar,
-  User,
   Package,
   Loader2,
   RefreshCcw,
@@ -27,6 +26,7 @@ import {
 } from 'lucide-react'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
+import { AdminAvatar } from '../../../components/admin/AdminAvatar'
 
 type BookingDetail = {
   id: string
@@ -46,8 +46,24 @@ type BookingDetail = {
   released_at_complete: string | null
   created_at: string
   updated_at: string
-  buyer: { id: string; display_name: string; email: string; phone: string; location_city: string; location_state: string }
-  seller: { id: string; display_name: string; email: string; phone: string; location_city: string; location_state: string }
+  buyer: {
+    id: string
+    display_name: string
+    email: string
+    phone: string
+    location_city: string
+    location_state: string
+    logo_url?: string | null
+  }
+  seller: {
+    id: string
+    display_name: string
+    email: string
+    phone: string
+    location_city: string
+    location_state: string
+    logo_url?: string | null
+  }
   listing: { id: string; title: string; service_category: string; hero_price_min: number; currency_code: string } | null
   escrow_breakdown: {
     amount_minor_total: number
@@ -135,6 +151,22 @@ export default function BookingsPage() {
   const [disputeChatMessages, setDisputeChatMessages] = useState<DisputeChatMessageRow[]>([])
   const [disputeChatError, setDisputeChatError] = useState<string | null>(null)
 
+  const enrichBookingLogos = async (detail: BookingDetail): Promise<BookingDetail> => {
+    const ids = [detail.buyer?.id, detail.seller?.id].filter(Boolean) as string[]
+    if (ids.length === 0) return detail
+    const { data } = await supabase.from('profiles').select('id, logo_url').in('id', ids)
+    const logos = Object.fromEntries((data ?? []).map((p) => [p.id, p.logo_url ?? null]))
+    return {
+      ...detail,
+      buyer: detail.buyer
+        ? { ...detail.buyer, logo_url: logos[detail.buyer.id] ?? detail.buyer.logo_url ?? null }
+        : detail.buyer,
+      seller: detail.seller
+        ? { ...detail.seller, logo_url: logos[detail.seller.id] ?? detail.seller.logo_url ?? null }
+        : detail.seller,
+    }
+  }
+
   const searchBooking = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!query.trim()) return
@@ -146,8 +178,8 @@ export default function BookingsPage() {
     const { data, error } = await supabase.rpc('get_service_order_details_for_admin', {
       p_query: query.trim(),
     })
-    if (data) setBooking(data as BookingDetail)
-    else if (!data && !error) setFeedback({ tone: 'error', message: 'Booking not found. Try service order UUID or order UUID.' })
+    if (data) setBooking(await enrichBookingLogos(data as BookingDetail))
+    else if (!data && !error) setFeedback({ tone: 'error', message: 'Booking not found. Try booking UUID or linked payment order UUID.' })
     setLoading(false)
   }
 
@@ -206,7 +238,7 @@ export default function BookingsPage() {
       mode?: string
     }
     const { data } = await supabase.rpc('get_service_order_details_for_admin', { p_query: booking.id })
-    setBooking(data as BookingDetail)
+    if (data) setBooking(await enrichBookingLogos(data as BookingDetail))
     setPendingStatus(null)
     const refundMsg =
       status === 'refunded'
@@ -300,8 +332,8 @@ export default function BookingsPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
-        title="Bookings (Service Orders)"
-        subtitle="Look up service bookings by ID or order ID. Force complete, cancel, or refund with audit reasons."
+        title="Bookings"
+        subtitle="Look up bookings by booking UUID or linked payment order UUID. Force complete, cancel, or refund with audit reasons."
         actions={
           <DeskLinkPills
             links={[
@@ -342,7 +374,7 @@ export default function BookingsPage() {
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
               <input
                 type="text"
-                placeholder="Service order UUID or Order UUID..."
+                placeholder="Booking UUID or linked payment order UUID..."
                 className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -500,7 +532,11 @@ export default function BookingsPage() {
                   <h3 className="text-sm font-bold text-gray-900 mb-4">Parties</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex items-start gap-3">
-                      <div className="bg-blue-100 p-2 rounded-full text-blue-600"><User size={16} /></div>
+                      <AdminAvatar
+                        size="md"
+                        src={booking.buyer?.logo_url}
+                        name={booking.buyer?.display_name || 'Buyer'}
+                      />
                       <div>
                         <p className="text-xs font-bold text-gray-400 uppercase">Buyer</p>
                         <p className="font-bold text-gray-900">{booking.buyer?.display_name ?? '—'}</p>
@@ -509,7 +545,11 @@ export default function BookingsPage() {
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
-                      <div className="bg-purple-100 p-2 rounded-full text-purple-600"><User size={16} /></div>
+                      <AdminAvatar
+                        size="md"
+                        src={booking.seller?.logo_url}
+                        name={booking.seller?.display_name || 'Seller'}
+                      />
                       <div>
                         <p className="text-xs font-bold text-gray-400 uppercase">Seller</p>
                         <p className="font-bold text-gray-900">{booking.seller?.display_name ?? '—'}</p>
@@ -681,7 +721,7 @@ export default function BookingsPage() {
                         setDisputeChatMessages([])
                         setDisputeChatError(null)
                         const { data } = await supabase.rpc('get_service_order_details_for_admin', { p_query: row.id })
-                        setBooking(data as BookingDetail)
+                        if (data) setBooking(await enrichBookingLogos(data as BookingDetail))
                         setLoading(false)
                       }}
                     >

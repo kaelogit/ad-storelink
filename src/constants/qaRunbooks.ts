@@ -55,6 +55,7 @@ export const QA_RUNBOOKS: QaRunbook[] = [
     ],
     adminLinks: [
       { href: '/dashboard/safety-tests', label: 'CI safety results' },
+      { href: '/dashboard/search-embeddings', label: 'Search AI' },
       { href: '/dashboard/observability', label: 'Observability' },
       { href: '/dashboard/settings', label: 'Settings' },
     ],
@@ -85,5 +86,7 @@ export const STAGING_SMOKE_CHECKLIST = [
   { label: 'Service booking dispute timeline', href: '/dashboard/bookings' },
   { label: 'Support ticket reply + resolve', href: '/dashboard/support' },
   { label: 'Content report triage', href: '/dashboard/content-reports' },
+  { label: 'Listing integrity (locks + drift)', href: '/dashboard/listing-integrity' },
   { label: 'Paystack incident desk', href: '/dashboard/payment-incidents' },
+  { label: 'Search AI embeddings (keep catalog searchable)', href: '/dashboard/search-embeddings' },
 ]

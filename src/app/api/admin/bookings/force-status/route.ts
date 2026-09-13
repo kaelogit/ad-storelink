@@ -51,6 +51,170 @@ function isProviderAlreadyRefunded(message: string | undefined): boolean {
   return m.includes('already refunded') || m.includes('already been refunded') || m.includes('duplicate')
 }
 
+type LinkedOrderRow = {
+  id: string
+  payment_reference: string | null
+  total_amount: number | null
+  currency_code: string | null
+  payout_status: string | null
+  refund_status: string | null
+  payment_leg?: string | null
+}
+
+async function refundOneOrder(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  order: LinkedOrderRow,
+): Promise<{ executed: boolean; orderId: string; currencyCode: string; paystackReference?: string | null; error?: string }> {
+  const currencyCode = order.currency_code || 'NGN'
+  const alreadyRefunded =
+    (order.refund_status || '').toLowerCase() === 'processed' ||
+    (order.payout_status || '').toLowerCase() === 'refunded'
+
+  if (alreadyRefunded) {
+    return {
+      executed: true,
+      orderId: order.id,
+      currencyCode,
+      paystackReference: order.payment_reference,
+    }
+  }
+
+  if (!order.payment_reference) {
+    return {
+      executed: false,
+      orderId: order.id,
+      currencyCode,
+      error: 'Linked order has no payment reference; cannot submit Paystack refund.',
+    }
+  }
+
+  const previousPayoutStatus = order.payout_status || null
+  const { data: claimRow } = await supabase
+    .from('orders')
+    .update({
+      payout_status: 'refund_processing',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', order.id)
+    .not('payout_status', 'in', '(refunded,refund_processing)')
+    .select('id, payment_reference, refund_status, payout_status')
+    .maybeSingle()
+
+  if (!claimRow) {
+    const { data: latestOrder } = await supabase
+      .from('orders')
+      .select('payment_reference, refund_status, payout_status')
+      .eq('id', order.id)
+      .maybeSingle()
+    const nowRefunded =
+      (latestOrder?.refund_status || '').toLowerCase() === 'processed' ||
+      (latestOrder?.payout_status || '').toLowerCase() === 'refunded' ||
+      (latestOrder?.payout_status || '').toLowerCase() === 'refund_processing'
+    if (nowRefunded) {
+      return {
+        executed: true,
+        orderId: order.id,
+        currencyCode,
+        paystackReference: latestOrder?.payment_reference ?? order.payment_reference,
+      }
+    }
+    return {
+      executed: false,
+      orderId: order.id,
+      currencyCode,
+      error: 'Refund could not be safely claimed. Retry shortly.',
+    }
+  }
+
+  const paystackKey = getPaystackKey(currencyCode)
+  if (!paystackKey) {
+    await supabase
+      .from('orders')
+      .update({ payout_status: previousPayoutStatus, updated_at: new Date().toISOString() })
+      .eq('id', order.id)
+    return {
+      executed: false,
+      orderId: order.id,
+      currencyCode,
+      error: `Missing Paystack key for ${currencyCode}. Set PAYSTACK_SECRET_KEY_*.`,
+    }
+  }
+
+  const amountSmallest = toSmallestUnit(Number(order.total_amount) || 0, currencyCode)
+  const paystackResp = await fetch('https://api.paystack.co/refund', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${paystackKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      transaction: order.payment_reference,
+      amount: amountSmallest,
+    }),
+  })
+  const paystackJson = (await paystackResp.json().catch(() => ({}))) as {
+    status?: boolean
+    message?: string
+    data?: { refund_reference?: string; transaction_reference?: string }
+  }
+
+  if (!paystackResp.ok || !paystackJson?.status) {
+    const providerMessage = paystackJson?.message || 'Paystack refund request failed'
+    if (!isProviderAlreadyRefunded(providerMessage)) {
+      await supabase
+        .from('orders')
+        .update({
+          payout_status: previousPayoutStatus,
+          payout_error_log: `Refund failed: ${providerMessage}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', order.id)
+      return {
+        executed: false,
+        orderId: order.id,
+        currencyCode,
+        error: `Refund failed at provider: ${providerMessage}. Booking status not changed.`,
+      }
+    }
+  }
+
+  const paystackReference =
+    paystackJson?.data?.refund_reference ??
+    paystackJson?.data?.transaction_reference ??
+    order.payment_reference
+
+  const { error: markOrderError } = await supabase
+    .from('orders')
+    .update({
+      payout_status: 'refunded',
+      refund_status: 'processed',
+      payout_error_log: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', order.id)
+
+  if (markOrderError) {
+    return {
+      executed: true,
+      orderId: order.id,
+      currencyCode,
+      paystackReference,
+      error: `Refund executed but order update failed: ${markOrderError.message}.`,
+    }
+  }
+
+  // Best-effort leg sync (DB trigger also runs).
+  await supabase.rpc('mark_service_order_leg_refunded_for_order', { p_order_id: order.id })
+
+  return {
+    executed: true,
+    orderId: order.id,
+    currencyCode,
+    paystackReference,
+  }
+}
+
 export async function POST(request: Request) {
   const auth = await getApiAdminContext(['super_admin', 'finance', 'support'])
   if (!auth.ok) {
@@ -67,7 +231,7 @@ export async function POST(request: Request) {
   if (!serviceOrderId || !newStatus || !reasonCategory || !reason) {
     return NextResponse.json(
       { error: 'serviceOrderId, newStatus, reasonCategory and reason are required' },
-      { status: 400 }
+      { status: 400 },
     )
   }
 
@@ -78,7 +242,7 @@ export async function POST(request: Request) {
   if (!ALLOWED_STATUSES.has(newStatus)) {
     return NextResponse.json(
       { error: `newStatus must be one of: ${[...ALLOWED_STATUSES].join(', ')}` },
-      { status: 400 }
+      { status: 400 },
     )
   }
 
@@ -106,6 +270,16 @@ export async function POST(request: Request) {
     orderId?: string
     currencyCode?: string
     paystackReference?: string | null
+    orders?: Array<{
+      orderId: string
+      executed: boolean
+      currencyCode: string
+      paymentLeg?: string | null
+      paystackReference?: string | null
+      error?: string
+    }>
+    heldMinor?: number
+    clawbackCapMinor?: number
   } = { executed: false }
   let clawbackDebt: {
     id: string
@@ -117,199 +291,146 @@ export async function POST(request: Request) {
   if (newStatus === 'refunded') {
     const { data: so, error: soErr } = await auth.supabase
       .from('service_orders')
-      .select('id, amount_minor, currency_code, seller_id, buyer_id, released_at_start, released_at_complete')
+      .select(
+        'id, amount_minor, currency_code, seller_id, buyer_id, released_at_start, released_at_complete, payment_state',
+      )
       .eq('id', serviceOrderId)
       .maybeSingle()
     if (soErr || !so) {
-      return NextResponse.json({ error: 'Service order not found' }, { status: 404 })
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
     }
-    const amountMinor = Number(so.amount_minor || 0)
-    const releasedMinor =
-      so.released_at_complete
-        ? amountMinor
-        : so.released_at_start
-          ? Math.floor(amountMinor * 0.3)
-          : 0
 
-    const { data: orderItem, error: orderItemError } = await auth.supabase
-      .from('order_items')
-      .select('order_id')
+    const { data: moneySummary } = await auth.supabase.rpc('get_service_order_refund_money_summary', {
+      p_service_order_id: serviceOrderId,
+    })
+    const summary = (moneySummary || {}) as {
+      held_minor?: number
+      clawback_cap_minor?: number
+      currency_code?: string
+    }
+    const clawbackCapMinor = Number(summary.clawback_cap_minor || 0)
+    const heldMinor = Number(summary.held_minor || 0)
+
+    // Prefer paid payment legs; fall back to any PAID linked orders.
+    const { data: legRows } = await auth.supabase
+      .from('service_order_payment_legs')
+      .select('order_id, leg, status, amount_minor')
       .eq('service_order_id', serviceOrderId)
-      .not('order_id', 'is', null)
-      .limit(1)
-      .maybeSingle()
+      .eq('status', 'paid')
 
-    if (orderItemError || !orderItem?.order_id) {
-      return NextResponse.json(
-        { error: 'No linked order found for this booking. Refund cannot be processed safely.' },
-        { status: 409 }
-      )
-    }
+    const orderIds = Array.from(
+      new Set((legRows || []).map((r: { order_id?: string | null }) => r.order_id).filter(Boolean) as string[]),
+    )
 
-    const { data: order, error: orderError } = await auth.supabase
-      .from('orders')
-      .select('id, payment_reference, total_amount, currency_code, payout_status, refund_status')
-      .eq('id', orderItem.order_id)
-      .maybeSingle()
+    let ordersToRefund: LinkedOrderRow[] = []
 
-    if (orderError || !order) {
-      return NextResponse.json({ error: 'Linked order not found.' }, { status: 404 })
-    }
-    if (!order.payment_reference) {
-      return NextResponse.json(
-        { error: 'Linked order has no payment reference; cannot submit Paystack refund.' },
-        { status: 409 }
-      )
-    }
-
-    refundResult = { executed: false, orderId: order.id, currencyCode: order.currency_code || 'NGN' }
-    const alreadyRefunded =
-      (order.refund_status || '').toLowerCase() === 'processed' ||
-      (order.payout_status || '').toLowerCase() === 'refunded'
-    const previousPayoutStatus = order.payout_status || null
-
-    if (!alreadyRefunded) {
-      const { data: claimRow } = await auth.supabase
+    if (orderIds.length > 0) {
+      const { data: orders, error: ordersError } = await auth.supabase
         .from('orders')
-        .update({
-          payout_status: 'refund_processing',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', order.id)
-        .not('payout_status', 'in', '(refunded,refund_processing)')
-        .select('id, payment_reference, refund_status, payout_status')
-        .maybeSingle()
-      if (!claimRow) {
-        const { data: latestOrder } = await auth.supabase
-          .from('orders')
-          .select('payment_reference, refund_status, payout_status')
-          .eq('id', order.id)
-          .maybeSingle()
-        const nowRefunded =
-          (latestOrder?.refund_status || '').toLowerCase() === 'processed' ||
-          (latestOrder?.payout_status || '').toLowerCase() === 'refunded' ||
-          (latestOrder?.payout_status || '').toLowerCase() === 'refund_processing'
-        if (nowRefunded) {
-          refundResult = {
-            executed: true,
-            orderId: order.id,
-            currencyCode: order.currency_code || 'NGN',
-            paystackReference: latestOrder?.payment_reference ?? order.payment_reference,
-          }
-        } else {
-          return NextResponse.json(
-            { error: 'Refund could not be safely claimed. Retry shortly.' },
-            { status: 409 }
-          )
-        }
-      } else {
-      const paystackKey = getPaystackKey(order.currency_code || 'NGN')
-      if (!paystackKey) {
-        await auth.supabase
-          .from('orders')
-          .update({ payout_status: previousPayoutStatus, updated_at: new Date().toISOString() })
-          .eq('id', order.id)
+        .select('id, payment_reference, total_amount, currency_code, payout_status, refund_status')
+        .in('id', orderIds)
+      if (ordersError || !orders?.length) {
         return NextResponse.json(
-          { error: `Missing Paystack key for ${order.currency_code || 'NGN'}. Set PAYSTACK_SECRET_KEY_*.` },
-          { status: 503 }
+          { error: 'Paid payment legs found but linked orders could not be loaded.' },
+          { status: 409 },
         )
       }
-
-      const amountSmallest = toSmallestUnit(Number(order.total_amount) || 0, order.currency_code || 'NGN')
-      const paystackResp = await fetch('https://api.paystack.co/refund', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${paystackKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          transaction: order.payment_reference,
-          amount: amountSmallest,
-        }),
-      })
-      const paystackJson = (await paystackResp.json().catch(() => ({}))) as {
-        status?: boolean
-        message?: string
-        data?: { refund_reference?: string; transaction_reference?: string }
+      const legByOrder = new Map(
+        (legRows || []).map((r: { order_id?: string | null; leg?: string | null }) => [
+          String(r.order_id),
+          r.leg || null,
+        ]),
+      )
+      ordersToRefund = orders.map((o) => ({
+        ...o,
+        payment_leg: legByOrder.get(o.id) ?? null,
+      }))
+    } else {
+      const { data: orderItem, error: orderItemError } = await auth.supabase
+        .from('order_items')
+        .select('order_id')
+        .eq('service_order_id', serviceOrderId)
+        .not('order_id', 'is', null)
+        .limit(8)
+      if (orderItemError || !orderItem?.length) {
+        return NextResponse.json(
+          { error: 'No linked order found for this booking. Refund cannot be processed safely.' },
+          { status: 409 },
+        )
       }
-
-      if (!paystackResp.ok || !paystackJson?.status) {
-        const providerMessage = paystackJson?.message || 'Paystack refund request failed'
-        if (!isProviderAlreadyRefunded(providerMessage)) {
-          await auth.supabase
-            .from('orders')
-            .update({
-              payout_status: previousPayoutStatus,
-              payout_error_log: `Refund failed: ${providerMessage}`,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', order.id)
-          return NextResponse.json(
-            {
-              error: `Refund failed at provider: ${providerMessage}. Booking status not changed.`,
-              refund: { executed: false, orderId: order.id, currencyCode: order.currency_code || 'NGN' },
-            },
-            { status: 409 }
-          )
-        }
-      }
-
-      const paystackReference =
-        paystackJson?.data?.refund_reference ??
-        paystackJson?.data?.transaction_reference ??
-        order.payment_reference
-
-      const { error: markOrderError } = await auth.supabase
+      const ids = orderItem.map((r: { order_id: string }) => r.order_id)
+      const { data: orders, error: ordersError } = await auth.supabase
         .from('orders')
-        .update({
-          payout_status: 'refunded',
-          refund_status: 'processed',
-          payout_error_log: null,
-          updated_at: new Date().toISOString(),
+        .select('id, payment_reference, total_amount, currency_code, payout_status, refund_status, status')
+        .in('id', ids)
+      if (ordersError || !orders?.length) {
+        return NextResponse.json({ error: 'Linked order not found.' }, { status: 404 })
+      }
+      ordersToRefund = orders
+        .filter((o) => {
+          const st = String(o.status || '').toUpperCase()
+          const refunded =
+            (o.refund_status || '').toLowerCase() === 'processed' ||
+            (o.payout_status || '').toLowerCase() === 'refunded'
+          return refunded || ['PAID', 'SHIPPED', 'COMPLETED', 'DISPUTE_OPEN', 'CANCELLED'].includes(st)
         })
-        .eq('id', order.id)
+        .map((o) => ({ ...o, payment_leg: 'full' as string | null }))
+    }
 
-      if (markOrderError) {
+    if (ordersToRefund.length === 0) {
+      return NextResponse.json(
+        { error: 'No refundable paid orders found for this booking.' },
+        { status: 409 },
+      )
+    }
+
+    const perOrderResults: NonNullable<(typeof refundResult)['orders']> = []
+    for (const order of ordersToRefund) {
+      const result = await refundOneOrder(auth.supabase, order)
+      perOrderResults.push({
+        orderId: result.orderId,
+        executed: result.executed,
+        currencyCode: result.currencyCode,
+        paymentLeg: order.payment_leg,
+        paystackReference: result.paystackReference,
+        error: result.error,
+      })
+      if (result.error && !result.executed) {
         return NextResponse.json(
           {
-            error: `Refund executed but order update failed: ${markOrderError.message}.`,
+            error: result.error,
             refund: {
-              executed: true,
-              orderId: order.id,
-              currencyCode: order.currency_code || 'NGN',
-              paystackReference,
+              executed: false,
+              orders: perOrderResults,
+              heldMinor,
+              clawbackCapMinor,
             },
           },
-          { status: 500 }
+          { status: result.error.includes('Missing Paystack') ? 503 : 409 },
         )
-      }
-
-      refundResult = {
-        executed: true,
-        orderId: order.id,
-        currencyCode: order.currency_code || 'NGN',
-        paystackReference,
-      }
-      }
-    } else {
-      refundResult = {
-        executed: true,
-        orderId: order.id,
-        currencyCode: order.currency_code || 'NGN',
-        paystackReference: order.payment_reference,
       }
     }
 
-    // Company-funded refund after release: create seller clawback debt and lock seller app access until repayment.
-    if (releasedMinor > 0 && so.seller_id && so.buyer_id) {
+    refundResult = {
+      executed: perOrderResults.every((r) => r.executed),
+      orderId: perOrderResults[0]?.orderId,
+      currencyCode: perOrderResults[0]?.currencyCode || so.currency_code || 'NGN',
+      paystackReference: perOrderResults[0]?.paystackReference,
+      orders: perOrderResults,
+      heldMinor,
+      clawbackCapMinor,
+    }
+
+    // Clawback capped by released-from-held (never full package when only deposit was funded).
+    if (clawbackCapMinor > 0 && so.seller_id && so.buyer_id) {
       const debtPayload = {
         service_order_id: so.id,
-        order_id: order.id,
+        order_id: perOrderResults[0]?.orderId || null,
         seller_id: so.seller_id,
         buyer_id: so.buyer_id,
-        currency_code: so.currency_code || order.currency_code || 'NGN',
-        amount_minor: releasedMinor,
-        reason: `Company-funded refund after dispute. Recover released payout from seller. Service order: ${so.id}`,
+        currency_code: so.currency_code || perOrderResults[0]?.currencyCode || 'NGN',
+        amount_minor: clawbackCapMinor,
+        reason: `Company-funded refund after dispute. Recover released payout (capped by held funds ${heldMinor}). Booking: ${so.id}`,
         status: 'open',
         paid_at: null,
         paid_reference: null,
@@ -321,8 +442,11 @@ export async function POST(request: Request) {
         .single()
       if (debtError || !debtRow) {
         return NextResponse.json(
-          { error: `Refund completed but clawback debt creation failed: ${debtError?.message || 'unknown error'}` },
-          { status: 500 }
+          {
+            error: `Refund completed but clawback debt creation failed: ${debtError?.message || 'unknown error'}`,
+            refund: refundResult,
+          },
+          { status: 500 },
         )
       }
       clawbackDebt = {

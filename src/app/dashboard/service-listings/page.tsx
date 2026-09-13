@@ -189,20 +189,57 @@ export default function ServiceListingsPage() {
           className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
         >
           <option value="">All categories</option>
-          <option value="nail_tech">Nail Tech</option>
-          <option value="barber">Barber</option>
-          <option value="makeup_artist">Makeup Artist</option>
-          <option value="makeup_artistry">Makeup Artistry</option>
-          <option value="pedicure_manicure">Pedicure/Manicure</option>
-          <option value="braids_styling">Braids Styling</option>
-          <option value="lashes">Lash Tech</option>
-          <option value="skincare">Skincare</option>
-          <option value="photographer">Photographer</option>
-          <option value="surprise_planners">Surprise Planners</option>
-          <option value="event_decorator">Event Decorator</option>
-          <option value="tailoring">Tailoring</option>
-          <option value="alterations">Alterations</option>
-          <option value="custom_outfits">Custom Outfits</option>
+          <optgroup label="Beauty">
+            <option value="nail_tech">Nail Tech</option>
+            <option value="barber">Barber</option>
+            <option value="hair_stylist">Hair Stylist</option>
+            <option value="wig_install">Wig Install</option>
+            <option value="makeup_artist">Makeup Artist</option>
+            <option value="pedicure_manicure">Pedicure/Manicure</option>
+            <option value="braids_styling">Braids Styling</option>
+            <option value="lashes">Lashes</option>
+            <option value="skincare">Skincare</option>
+          </optgroup>
+          <optgroup label="Fashion">
+            <option value="tailoring">Tailoring</option>
+            <option value="alterations">Alterations</option>
+            <option value="custom_outfits">Custom Outfits</option>
+          </optgroup>
+          <optgroup label="Events">
+            <option value="photographer">Photographer</option>
+            <option value="videographer">Videographer</option>
+            <option value="dj_mc">DJ / MC</option>
+            <option value="surprise_planners">Surprise Planners</option>
+            <option value="event_decorator">Event Decorator</option>
+          </optgroup>
+          <optgroup label="Wellness">
+            <option value="spa">Spa</option>
+            <option value="massage">Massage</option>
+            <option value="fitness_trainer">Fitness / Trainer</option>
+          </optgroup>
+          <optgroup label="Home">
+            <option value="cleaning">Cleaning</option>
+            <option value="laundry">Laundry</option>
+            <option value="plumber">Plumber</option>
+            <option value="electrician">Electrician</option>
+            <option value="catering">Cook / Catering</option>
+          </optgroup>
+          <optgroup label="Automotive">
+            <option value="mechanic">Mechanic</option>
+            <option value="auto_detailing">Auto Detailing</option>
+            <option value="car_wash">Car Wash</option>
+          </optgroup>
+          <optgroup label="Real Estate">
+            <option value="real_estate_agent">Real Estate Agent</option>
+            <option value="property_inspection">Property Inspection</option>
+          </optgroup>
+          <optgroup label="Electronics">
+            <option value="device_repair">Phone / Laptop Repair</option>
+          </optgroup>
+          <optgroup label="Other">
+            <option value="tutoring">Tutoring</option>
+            <option value="other">Other</option>
+          </optgroup>
         </select>
       </div>
 

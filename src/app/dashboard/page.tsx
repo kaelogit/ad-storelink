@@ -32,6 +32,8 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts'
 import { QA_RUNBOOKS } from '../../constants/qaRunbooks'
+import { DisasterRecoveryPanel } from '../../components/admin/DisasterRecoveryPanel'
+import { EscrowHealthPanel } from '../../components/admin/EscrowHealthPanel'
 
 export default function DashboardOverview() {
   const supabase = createClient()
@@ -185,6 +187,15 @@ export default function DashboardOverview() {
           </div>
         </div>
       </div>
+
+      {/* Disaster recovery — Paystack / webhook / payouts (#106) */}
+      {['super_admin', 'finance', 'support'].includes(role || '') && (
+        <DisasterRecoveryPanel />
+      )}
+
+      {['super_admin', 'finance', 'support', 'analyst'].includes(role || '') && (
+        <EscrowHealthPanel compact />
+      )}
 
       {/* 2. Command Center Grid (5 Cards) */}
       {/* When "All Countries" selected: hide GMV/Revenue/Escrow (mixed-currency trap) */}

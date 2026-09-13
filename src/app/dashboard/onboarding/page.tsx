@@ -119,6 +119,7 @@ export default function OnboardingFunnelPage() {
         actions={
           <DeskLinkPills
             links={[
+              { href: '/dashboard/analytics', label: 'Analytics warehouse' },
               { href: '/dashboard/users', label: 'Users' },
               { href: '/dashboard/geo-policy', label: 'Geo policy' },
               { href: '/dashboard/safety-tests', label: 'QA Hub' },
