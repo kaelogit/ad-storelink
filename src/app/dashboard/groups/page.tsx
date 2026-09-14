@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Loader2, RefreshCcw, Search, Users } from 'lucide-react'
+import { Loader2, RefreshCcw, Search } from 'lucide-react'
 
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
@@ -151,12 +151,11 @@ export default function AdminGroupsDeskPage() {
     <div className="space-y-6">
       <PageHeader
         title="Communities"
-        description="List seller communities, force-archive, and ban hosts from creating new groups."
-        icon={Users}
+        subtitle="List seller communities, force-archive, and ban hosts from creating new groups."
       />
 
       <DeskLinkPills
-        items={[
+        links={[
           { href: '/dashboard/content-reports', label: 'Report Inbox' },
           { href: '/dashboard/chats', label: 'P2P Chats' },
           { href: '/dashboard/users', label: 'Users' },

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getApiAdminContext } from '../../../../../../utils/auth/apiAdmin'
+import { getApiAdminContext } from '@/utils/auth/apiAdmin'
 
 type CreateBody = {
   title?: string

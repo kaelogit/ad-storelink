@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
+import { getApiAdminContext } from '@/utils/auth/apiAdmin'
 
 const QUEUE_KEYS = new Set(['kyc_identity', 'kyc_business', 'content_report'])
 
