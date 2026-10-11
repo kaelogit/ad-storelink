@@ -99,7 +99,7 @@ export default function P2PChatViewerPage() {
       userId?: string | null
       partnerId?: string | null
       q?: string | null
-    }) => {
+    }): Promise<{ ok: boolean; rows: P2PChatRow[] }> => {
       setLoading(true)
       setFeedback(null)
 
@@ -117,7 +117,7 @@ export default function P2PChatViewerPage() {
         setRows([])
         setSelectedChatId(null)
         setLoading(false)
-        return [] as P2PChatRow[]
+        return { ok: false, rows: [] }
       }
 
       const payload = (await response.json().catch(() => ({}))) as {
@@ -132,19 +132,28 @@ export default function P2PChatViewerPage() {
         return nextRows[0]?.chat_id ?? null
       })
       setLoading(false)
-      return nextRows
+      return { ok: true, rows: nextRows }
     },
     [countryParam],
   )
 
   const loadRecent = useCallback(async () => {
-    const next = await fetchChats({
+    const result = await fetchChats({
       mode: 'browse',
       partnerId: partnerId.trim() || null,
     })
+    if (!result.ok) return
+    if (result.rows.length === 0) {
+      setFeedback({
+        tone: 'info',
+        message:
+          'No threads for this country filter. Nigeria should show threads where buyer or seller has NG — try Lookup with thefirstshopper if still empty.',
+      })
+      return
+    }
     setFeedback({
       tone: 'info',
-      message: `Showing ${next.length} recent thread${next.length === 1 ? '' : 's'}. Browse is audit-logged.`,
+      message: `Showing ${result.rows.length} recent thread${result.rows.length === 1 ? '' : 's'}. Browse is audit-logged.`,
     })
   }, [fetchChats, partnerId])
 
@@ -162,35 +171,38 @@ export default function P2PChatViewerPage() {
 
     // UUID: try as chat id first; if empty, retry as user id.
     if (parsed.chatId && parsed.userId && parsed.chatId === parsed.userId) {
-      let next = await fetchChats({
+      let result = await fetchChats({
         mode: 'search',
         chatId: parsed.chatId,
         partnerId: trimmedPartner,
       })
-      if (next.length === 0) {
-        next = await fetchChats({
+      if (!result.ok) return
+      if (result.rows.length === 0) {
+        result = await fetchChats({
           mode: 'search',
           userId: parsed.userId,
           partnerId: trimmedPartner,
         })
+        if (!result.ok) return
       }
       setFeedback({
         tone: 'info',
-        message: `Found ${next.length} chat thread${next.length === 1 ? '' : 's'}. Lookup is audit-logged.`,
+        message: `Found ${result.rows.length} chat thread${result.rows.length === 1 ? '' : 's'}. Lookup is audit-logged.`,
       })
       return
     }
 
-    const next = await fetchChats({
+    const result = await fetchChats({
       mode: 'search',
       chatId: parsed.chatId || null,
       userId: parsed.userId || null,
       q: parsed.q || null,
       partnerId: trimmedPartner,
     })
+    if (!result.ok) return
     setFeedback({
       tone: 'info',
-      message: `Found ${next.length} chat thread${next.length === 1 ? '' : 's'}. Lookup is audit-logged.`,
+      message: `Found ${result.rows.length} chat thread${result.rows.length === 1 ? '' : 's'}. Lookup is audit-logged.`,
     })
   }, [fetchChats, lookup, partnerId])
 
