@@ -87,7 +87,9 @@ export default function PaymentIncidentsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [pendingSave, setPendingSave] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
-  const [tab, setTab] = useState<'failures' | 'stuck'>('failures')
+  const [tab, setTab] = useState<'failures' | 'stuck'>('stuck')
+  const [tabTouched, setTabTouched] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
 
   const [windowDraft, setWindowDraft] = useState(1)
   const [thresholdDraft, setThresholdDraft] = useState(3)
@@ -135,8 +137,15 @@ export default function PaymentIncidentsPage() {
     const payload = (await response.json()) as DeskPayload
     setDesk(payload)
     syncDraftFromDesk(payload)
+    if (!tabTouched) {
+      const stuck = Number(payload?.summary?.stuckOrdersCount ?? 0)
+      const errs = Number(payload?.summary?.webhookErrorsInAlertWindow ?? 0)
+      if (stuck > 0) setTab('stuck')
+      else if (errs > 0 || payload?.summary?.alertTriggered) setTab('failures')
+      else setTab('stuck')
+    }
     setLoading(false)
-  }, [syncDraftFromDesk])
+  }, [syncDraftFromDesk, tabTouched])
 
   useEffect(() => {
     void loadDesk()
@@ -145,6 +154,10 @@ export default function PaymentIncidentsPage() {
   const summary = desk?.summary
   const failures = desk?.webhookFailures ?? []
   const stuckOrders = desk?.stuckOrders ?? []
+  const selectTab = (next: 'failures' | 'stuck') => {
+    setTabTouched(true)
+    setTab(next)
+  }
 
   const failureByOrderId = useMemo(() => {
     const map = new Map<string, WebhookFailure>()
@@ -186,7 +199,7 @@ export default function PaymentIncidentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Payment incidents (Paystack)"
-        subtitle="Webhook failures from observability and orders stuck in AWAITING_PAYMENT — reconcile without manual DB lookup."
+        subtitle="Work the queue: abandoned checkouts first, then real webhook failures. Mark paid only after Paystack confirms money."
         actions={
           <div className="flex flex-col items-end gap-2">
             <DeskLinkPills
@@ -215,32 +228,42 @@ export default function PaymentIncidentsPage() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 text-red-700 shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-bold text-red-900">Alert threshold exceeded</p>
+            <p className="text-sm font-bold text-red-900">Webhook alert threshold exceeded</p>
             <p className="text-xs text-red-800 mt-1">
               {summary.webhookErrorsInAlertWindow ?? 0} paystack-webhook error(s) in the last{' '}
               {desk?.config?.alertWindowHours ?? 1}h (threshold: {desk?.config?.alertErrorThreshold ?? 3}).
-              Investigate failures below and reconcile stuck orders.
             </p>
+            <button
+              type="button"
+              onClick={() => selectTab('failures')}
+              className="mt-2 text-xs font-bold text-red-900 underline"
+            >
+              Open webhook failures →
+            </button>
           </div>
         </div>
       ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <SummaryCard
+          label="Stuck awaiting payment"
+          value={summary?.stuckOrdersCount ?? 0}
+          hint={`No Paystack ref · older than ${desk?.config?.stuckOrderMinAgeMinutes ?? 30} min`}
+          alert={(summary?.stuckOrdersCount ?? 0) > 0}
+          onClick={() => selectTab('stuck')}
+        />
+        <SummaryCard
           label="Webhook errors (window)"
           value={summary?.webhookErrorsInAlertWindow ?? 0}
-          hint={`Rolling ${desk?.config?.alertWindowHours ?? 1}h window`}
+          hint={`Rolling ${desk?.config?.alertWindowHours ?? 1}h`}
           alert={Boolean(summary?.alertTriggered)}
+          onClick={() => selectTab('failures')}
         />
         <SummaryCard
           label="Webhook errors (lookback)"
           value={summary?.webhookErrorsLookback ?? 0}
           hint={`Last ${desk?.config?.deskLookbackHours ?? 168}h`}
-        />
-        <SummaryCard
-          label="Stuck awaiting payment"
-          value={summary?.stuckOrdersCount ?? 0}
-          hint={`Older than ${desk?.config?.stuckOrderMinAgeMinutes ?? 30} min, no ref`}
+          onClick={() => selectTab('failures')}
         />
         <SummaryCard
           label="Last webhook error"
@@ -251,87 +274,104 @@ export default function PaymentIncidentsPage() {
           }
           hint="From observability_events"
           isText
+          onClick={() => selectTab('failures')}
         />
       </div>
 
       {canEdit ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Settings2 className="h-4 w-4 text-gray-500" />
-            <h2 className="text-sm font-bold text-gray-900">Alert thresholds</h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <label className="space-y-1">
-              <span className="text-[10px] font-bold uppercase text-gray-400">Alert window (hours)</span>
-              <input
-                type="number"
-                min={1}
-                max={168}
-                value={windowDraft}
-                onChange={(e) => setWindowDraft(Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-bold uppercase text-gray-400">Error threshold</span>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={thresholdDraft}
-                onChange={(e) => setThresholdDraft(Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-bold uppercase text-gray-400">Stuck order min age (min)</span>
-              <input
-                type="number"
-                min={5}
-                max={1440}
-                value={stuckAgeDraft}
-                onChange={(e) => setStuckAgeDraft(Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-bold uppercase text-gray-400">Desk lookback (hours)</span>
-              <input
-                type="number"
-                min={1}
-                max={720}
-                value={lookbackDraft}
-                onChange={(e) => setLookbackDraft(Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
-              />
-            </label>
-          </div>
-          <label className="block space-y-1">
-            <span className="text-[10px] font-bold uppercase text-gray-400">Operator notes</span>
-            <textarea
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              rows={2}
-              className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
-            />
-          </label>
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
           <button
             type="button"
-            disabled={submitting}
-            onClick={() => setPendingSave(true)}
-            className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-bold text-white hover:bg-black disabled:opacity-50"
+            onClick={() => setConfigOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-gray-50"
           >
-            Save thresholds
+            <div className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4 text-gray-500" />
+              <div>
+                <h2 className="text-sm font-bold text-gray-900">Alert thresholds</h2>
+                <p className="text-[10px] text-gray-500">
+                  Super-admin only · keep collapsed during normal triage
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold text-gray-500">{configOpen ? 'Hide' : 'Edit'}</span>
           </button>
+          {configOpen ? (
+            <div className="border-t border-gray-100 p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <label className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-gray-400">Alert window (hours)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={168}
+                    value={windowDraft}
+                    onChange={(e) => setWindowDraft(Number(e.target.value))}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-gray-400">Error threshold</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={thresholdDraft}
+                    onChange={(e) => setThresholdDraft(Number(e.target.value))}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-gray-400">Stuck order min age (min)</span>
+                  <input
+                    type="number"
+                    min={5}
+                    max={1440}
+                    value={stuckAgeDraft}
+                    onChange={(e) => setStuckAgeDraft(Number(e.target.value))}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-gray-400">Desk lookback (hours)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={720}
+                    value={lookbackDraft}
+                    onChange={(e) => setLookbackDraft(Number(e.target.value))}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
+                  />
+                </label>
+              </div>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase text-gray-400">Operator notes</span>
+                <textarea
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  rows={2}
+                  className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setPendingSave(true)}
+                className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-bold text-white hover:bg-black disabled:opacity-50"
+              >
+                Save thresholds
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       <div className="flex gap-2 border-b border-gray-200">
-        <TabButton active={tab === 'failures'} onClick={() => setTab('failures')} count={failures.length}>
-          Webhook failures
-        </TabButton>
-        <TabButton active={tab === 'stuck'} onClick={() => setTab('stuck')} count={stuckOrders.length}>
+        <TabButton active={tab === 'stuck'} onClick={() => selectTab('stuck')} count={stuckOrders.length}>
           Stuck orders
+        </TabButton>
+        <TabButton active={tab === 'failures'} onClick={() => selectTab('failures')} count={failures.length}>
+          Webhook failures
         </TabButton>
       </div>
 
@@ -401,56 +441,83 @@ export default function PaymentIncidentsPage() {
           message={`Orders in AWAITING_PAYMENT/PENDING without a payment reference, older than ${desk?.config?.stuckOrderMinAgeMinutes ?? 30} minutes.`}
         />
       ) : (
-        <DataTable>
-          <DataTableHeader>
-            <DataTableRow>
-              <DataTableHead>Order</DataTableHead>
-              <DataTableHead>Amount</DataTableHead>
-              <DataTableHead>Age</DataTableHead>
-              <DataTableHead>Channel</DataTableHead>
-              <DataTableHead>Reconcile</DataTableHead>
-            </DataTableRow>
-          </DataTableHeader>
-          <DataTableBody>
-            {stuckOrders.map((order) => {
-              const linkedFailure = failureByOrderId.get(order.id)
-              return (
-                <DataTableRow key={order.id}>
-                  <DataTableCell>
-                    <p className="font-mono text-[10px] break-all text-gray-900">{order.id}</p>
-                    <p className="text-[10px] text-gray-500 mt-0.5 uppercase">{order.status}</p>
-                  </DataTableCell>
-                  <DataTableCell className="text-xs font-mono">
-                    {order.currency_code} {Number(order.total_amount ?? 0).toLocaleString()}
-                  </DataTableCell>
-                  <DataTableCell className="text-xs">{order.age_minutes ?? 0} min</DataTableCell>
-                  <DataTableCell className="text-[10px] text-gray-600">
-                    {order.origin_channel || '—'}
-                    {order.checkout_mode ? ` · ${order.checkout_mode}` : ''}
-                  </DataTableCell>
-                  <DataTableCell>
-                    {canReconcile ? (
-                      <MarkOrderPaidInline
-                        orderId={order.id}
-                        suggestedReference={linkedFailure?.reference}
-                        compact
-                        onSuccess={() => void loadDesk()}
-                      />
-                    ) : (
-                      <Link
-                        href={`/dashboard/orders?q=${encodeURIComponent(order.id)}`}
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:underline"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        View
-                      </Link>
-                    )}
-                  </DataTableCell>
-                </DataTableRow>
-              )
-            })}
-          </DataTableBody>
-        </DataTable>
+        <div className="space-y-3">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-amber-950 leading-relaxed">
+              <span className="font-bold">Most “stuck” rows with no Paystack ref are abandoned checkouts</span>
+              — buyer opened Paystack and never paid. Do <span className="font-bold">not</span> Mark paid
+              unless Paystack Dashboard shows a successful charge for that order. Real webhook failures land
+              in the Webhook failures tab with a reference.
+            </p>
+          </div>
+          <DataTable>
+            <DataTableHeader>
+              <DataTableRow>
+                <DataTableHead>Order</DataTableHead>
+                <DataTableHead>Amount</DataTableHead>
+                <DataTableHead>Age</DataTableHead>
+                <DataTableHead>Channel</DataTableHead>
+                <DataTableHead>Signal</DataTableHead>
+                <DataTableHead>Actions</DataTableHead>
+              </DataTableRow>
+            </DataTableHeader>
+            <DataTableBody>
+              {stuckOrders.map((order) => {
+                const linkedFailure = failureByOrderId.get(order.id)
+                const likelyAbandoned = !linkedFailure?.reference
+                return (
+                  <DataTableRow key={order.id}>
+                    <DataTableCell>
+                      <p className="font-mono text-[10px] break-all text-gray-900">{order.id}</p>
+                      <p className="text-[10px] text-gray-500 mt-0.5 uppercase">{order.status}</p>
+                    </DataTableCell>
+                    <DataTableCell className="text-xs font-mono">
+                      {order.currency_code} {Number(order.total_amount ?? 0).toLocaleString()}
+                    </DataTableCell>
+                    <DataTableCell className="text-xs">{order.age_minutes ?? 0} min</DataTableCell>
+                    <DataTableCell className="text-[10px] text-gray-600">
+                      {order.origin_channel || '—'}
+                      {order.checkout_mode ? ` · ${order.checkout_mode}` : ''}
+                    </DataTableCell>
+                    <DataTableCell>
+                      {likelyAbandoned ? (
+                        <span className="rounded-full bg-amber-50 border border-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                          Likely abandoned
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-red-50 border border-red-100 px-2 py-0.5 text-[10px] font-bold text-red-800">
+                          Has webhook signal
+                        </span>
+                      )}
+                    </DataTableCell>
+                    <DataTableCell>
+                      <div className="flex flex-col gap-1.5 items-start">
+                        <Link
+                          href={`/dashboard/orders?q=${encodeURIComponent(order.id)}`}
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Open detail
+                        </Link>
+                        {canReconcile && !likelyAbandoned ? (
+                          <MarkOrderPaidInline
+                            orderId={order.id}
+                            suggestedReference={linkedFailure?.reference}
+                            compact
+                            onSuccess={() => void loadDesk()}
+                          />
+                        ) : canReconcile ? (
+                          <span className="text-[10px] text-gray-400">Confirm in Paystack before Mark paid</span>
+                        ) : null}
+                      </div>
+                    </DataTableCell>
+                  </DataTableRow>
+                )
+              })}
+            </DataTableBody>
+          </DataTable>
+        </div>
       )}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 flex items-start gap-2">
@@ -484,15 +551,31 @@ function SummaryCard({
   hint,
   alert,
   isText,
+  onClick,
 }: {
   label: string
   value: number | string
   hint: string
   alert?: boolean
   isText?: boolean
+  onClick?: () => void
 }) {
+  const className = `rounded-xl border p-4 text-left w-full ${
+    alert ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'
+  } ${onClick ? 'hover:border-blue-200 hover:shadow-sm transition cursor-pointer' : ''}`
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className}>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</p>
+        <p className={`mt-1 font-black text-gray-900 ${isText ? 'text-sm' : 'text-2xl'}`}>{value}</p>
+        <p className="text-[10px] text-gray-500 mt-1">{hint}</p>
+      </button>
+    )
+  }
+
   return (
-    <div className={`rounded-xl border p-4 ${alert ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
+    <div className={className}>
       <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</p>
       <p className={`mt-1 font-black text-gray-900 ${isText ? 'text-sm' : 'text-2xl'}`}>{value}</p>
       <p className="text-[10px] text-gray-500 mt-1">{hint}</p>
