@@ -28,7 +28,7 @@ This document is the compatibility gate for `admin-storelink`, `store-link-mobil
 
 ## Canonical Workflow Statuses (used across apps)
 
-- Account status: `active`, `suspended`, `banned`, `pending_appeal`
+- Account status: `active`, `suspended`, `pending_appeal`, `disabled`, `banned`
 - Order status: `PENDING`, `AWAITING_PAYMENT`, `PAID`, `SHIPPED`, `COMPLETED`, `CANCELLED`, `DISPUTE_OPEN`
 - Support ticket status: `OPEN`, `PENDING`, `RESOLVED`, `CLOSED` (case-insensitive mapping required where legacy lowercase exists)
 - Payout status: `pending`, `retry_queued`, `paid`, `failed` (legacy values mapped in admin views)

@@ -52,6 +52,13 @@ export async function POST(request: Request) {
     )
   }
 
+  if (userId === auth.userId) {
+    return NextResponse.json(
+      { error: 'cannot_adjust_own_coins', hint: 'Another admin must adjust your coin balance.' },
+      { status: 403 }
+    )
+  }
+
   if (direction !== 'credit' && direction !== 'debit') {
     return NextResponse.json({ error: 'direction must be credit or debit' }, { status: 400 })
   }
@@ -106,6 +113,9 @@ export async function POST(request: Request) {
 
   if (rpcError) {
     const message = rpcError.message || 'Coin adjustment failed'
+    if (/cannot_adjust_own_coins/i.test(message)) {
+      return NextResponse.json({ error: message }, { status: 403 })
+    }
     const status = message.includes('INSUFFICIENT_COINS') ? 409 : 400
     return NextResponse.json({ error: message }, { status })
   }

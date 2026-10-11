@@ -14,7 +14,7 @@ import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { useTableStateFromUrl } from '../../../hooks/useTableStateFromUrl'
 import { parseApiError } from '../../../utils/http'
 import { 
-  Search, Eye, ShieldOff, UserCheck, Wallet, Loader2, Users as UsersIcon, MapPin, Calendar, Copy, ChevronLeft, ChevronRight, MessagesSquare
+  Search, Eye, ShieldOff, UserCheck, Wallet, Loader2, Users as UsersIcon, MapPin, Calendar, Copy, ChevronLeft, ChevronRight, MessagesSquare, Ban, CircleOff
 } from 'lucide-react'
 import { UserSubscriptionPanel } from '../../../components/admin/UserSubscriptionPanel'
 import { UserCoinsPanel } from '../../../components/admin/UserCoinsPanel'
@@ -44,7 +44,7 @@ export default function UserManagement() {
   const [dossier, setDossier] = useState<any>(null)
   const [dossierLoading, setDossierLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
-  const [pendingAccountStatus, setPendingAccountStatus] = useState<'suspended' | 'active' | null>(null)
+  const [pendingAccountStatus, setPendingAccountStatus] = useState<'suspended' | 'active' | 'disabled' | 'banned' | null>(null)
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
 
   const fetchUsers = useCallback(async () => {
@@ -104,7 +104,7 @@ export default function UserManagement() {
       const [{ data: profileData }, { data: subscriptionPayments }, { data: coinLedger }, { data: referralSummary }, { data: sellerSnapshot }, { data: sellerHealth }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('coin_balance, currency_code, subscription_plan, subscription_expiry, subscription_status, prestige_weight, is_seller')
+          .select('coin_balance, currency_code, subscription_plan, subscription_expiry, subscription_status, prestige_weight, is_seller, account_status, disabled_by, disabled_at, scheduled_deletion_at, suspension_reason, banned_at')
           .eq('id', userId)
           .maybeSingle(),
         supabase
@@ -127,6 +127,13 @@ export default function UserManagement() {
       ])
       setDossier({
         ...data,
+        status: profileData?.account_status || data?.status || 'active',
+        account_status: profileData?.account_status || data?.status || 'active',
+        disabled_by: profileData?.disabled_by ?? null,
+        disabled_at: profileData?.disabled_at ?? null,
+        scheduled_deletion_at: profileData?.scheduled_deletion_at ?? null,
+        suspension_reason: profileData?.suspension_reason ?? null,
+        banned_at: profileData?.banned_at ?? null,
         coin_balance: Number(profileData?.coin_balance ?? 0),
         currency_code: profileData?.currency_code || 'NGN',
         subscription_profile: profileData,
@@ -159,10 +166,9 @@ export default function UserManagement() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- selectUser is stable enough; avoid re-running when its identity changes
   }, [q, loading, users, dossier?.id])
 
-  const requestAccountStatusChange = () => {
+  const requestAccountStatusChange = (next: 'suspended' | 'active' | 'disabled' | 'banned') => {
     if (!dossier) return
-    const newStatus = dossier.status === 'active' ? 'suspended' : 'active'
-    setPendingAccountStatus(newStatus)
+    setPendingAccountStatus(next)
   }
 
   const submitAccountStatusChange = async (payload: { category: string; reason: string }) => {
@@ -174,6 +180,7 @@ export default function UserManagement() {
         userId: dossier.id,
         accountStatus: pendingAccountStatus,
         reason: payload.reason.trim(),
+        reasonCategory: payload.category,
       }),
     })
     if (!response.ok) {
@@ -182,7 +189,11 @@ export default function UserManagement() {
       setPendingAccountStatus(null)
       return
     }
-    setDossier({ ...dossier, status: pendingAccountStatus })
+    setDossier({
+      ...dossier,
+      status: pendingAccountStatus,
+      account_status: pendingAccountStatus,
+    })
     setFeedback({ tone: 'success', message: `Account status updated to ${pendingAccountStatus}.` })
     setPendingAccountStatus(null)
     void fetchUsers()
@@ -216,16 +227,32 @@ export default function UserManagement() {
 
       <ActionReasonModal
         open={pendingAccountStatus !== null}
-        title={pendingAccountStatus === 'suspended' ? 'Freeze this account?' : 'Activate this account?'}
+        title={
+          pendingAccountStatus === 'suspended'
+            ? 'Freeze this account?'
+            : pendingAccountStatus === 'disabled'
+              ? 'Disable this account?'
+              : pendingAccountStatus === 'banned'
+                ? 'Ban this account permanently?'
+                : 'Activate this account?'
+        }
         description={
           pendingAccountStatus === 'suspended'
-            ? 'The user will lose access to the platform until the account is reactivated.'
-            : 'The user will regain full access to the platform.'
+            ? 'The user will lose access until reactivated or an appeal is approved.'
+            : pendingAccountStatus === 'disabled'
+              ? 'Escalate from suspension to disabled. Appeals close; the user cannot self-reactivate.'
+              : pendingAccountStatus === 'banned'
+                ? 'Final rung. No in-app appeal. Only an admin can restore access later.'
+                : 'The user will regain full access to the platform.'
         }
         impactSummary={
           pendingAccountStatus === 'suspended'
-            ? 'User will be logged out and cannot sign in until an admin reactivates the account.'
-            : 'User can sign in and use the app again.'
+            ? 'User is locked to the suspension screen and may submit an appeal.'
+            : pendingAccountStatus === 'disabled'
+              ? 'Requires an existing suspension. User is locked with no appeal path.'
+              : pendingAccountStatus === 'banned'
+                ? 'Requires a disabled account. Permanent product lock until admin activate.'
+                : 'User can use the app and web again.'
         }
         categoryOptions={[
           { value: 'abuse', label: 'Abuse / harassment' },
@@ -428,14 +455,64 @@ export default function UserManagement() {
                         </div>
 
                         {/* Actions */}
-                        <div className="pt-4">
-                            <button 
+                        <div className="pt-4 space-y-2">
+                            {dossier.status === 'active' ? (
+                              <button
                                 type="button"
-                                onClick={requestAccountStatusChange}
-                                className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm ${dossier.status === 'active' ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-600 text-white hover:bg-green-700'}`}
-                            >
-                                {dossier.status === 'active' ? <><ShieldOff size={16} /> Freeze Account</> : <><UserCheck size={16} /> Activate Account</>}
-                            </button>
+                                onClick={() => requestAccountStatusChange('suspended')}
+                                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm bg-red-50 text-red-600 hover:bg-red-100"
+                              >
+                                <ShieldOff size={16} /> Freeze Account
+                              </button>
+                            ) : null}
+
+                            {dossier.status === 'suspended' || dossier.status === 'pending_appeal' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => requestAccountStatusChange('disabled')}
+                                  className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm bg-gray-900 text-white hover:bg-black"
+                                >
+                                  <CircleOff size={16} /> Disable Account
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => requestAccountStatusChange('active')}
+                                  className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm bg-green-600 text-white hover:bg-green-700"
+                                >
+                                  <UserCheck size={16} /> Activate Account
+                                </button>
+                              </>
+                            ) : null}
+
+                            {dossier.status === 'disabled' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => requestAccountStatusChange('banned')}
+                                  className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm bg-red-700 text-white hover:bg-red-800"
+                                >
+                                  <Ban size={16} /> Ban Account
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => requestAccountStatusChange('active')}
+                                  className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm bg-green-600 text-white hover:bg-green-700"
+                                >
+                                  <UserCheck size={16} /> Activate Account
+                                </button>
+                              </>
+                            ) : null}
+
+                            {dossier.status === 'banned' ? (
+                              <button
+                                type="button"
+                                onClick={() => requestAccountStatusChange('active')}
+                                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition shadow-sm bg-green-600 text-white hover:bg-green-700"
+                              >
+                                <UserCheck size={16} /> Activate Account
+                              </button>
+                            ) : null}
                         </div>
                     </div>
                 </div>

@@ -1,6 +1,6 @@
 export type AdminRole = 'super_admin' | 'moderator' | 'finance' | 'support' | 'content' | 'analyst'
 
-export type AccountStatus = 'active' | 'suspended' | 'banned' | 'pending_appeal'
+export type AccountStatus = 'active' | 'suspended' | 'banned' | 'pending_appeal' | 'disabled'
 
 export type OrderStatus =
   | 'PENDING'

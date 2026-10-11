@@ -53,6 +53,7 @@ type ReferralStats = {
     first_order_coins?: number
     repeat_order_coins?: number
     repeat_window_months?: number
+    min_order_gmv_by_currency?: Record<string, number>
     source?: string
     notes?: string
   }
@@ -239,6 +240,12 @@ export default function ReferralsPage() {
               <div className="flex justify-between"><span className="text-gray-600">First order</span><span className="font-bold">{config.first_order_coins?.toLocaleString()} coins</span></div>
               <div className="flex justify-between"><span className="text-gray-600">Repeat order</span><span className="font-bold">{config.repeat_order_coins?.toLocaleString()} coins</span></div>
               <div className="flex justify-between"><span className="text-gray-600">Repeat window</span><span className="font-bold">{config.repeat_window_months} months</span></div>
+              {config.min_order_gmv_by_currency?.NGN != null ? (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Min order GMV (NGN)</span>
+                  <span className="font-bold">₦{Number(config.min_order_gmv_by_currency.NGN).toLocaleString()}</span>
+                </div>
+              ) : null}
               <p className="text-[10px] text-gray-500 pt-2 border-t border-emerald-100 leading-relaxed">
                 Source: <span className="font-mono">{config.source}</span>. {config.notes}
               </p>

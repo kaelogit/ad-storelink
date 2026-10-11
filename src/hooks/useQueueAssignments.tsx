@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export type QueueKey = 'kyc_identity' | 'kyc_business' | 'content_report'
 
@@ -15,15 +15,16 @@ export function useQueueAssignments(queueKey: QueueKey, targetIds: string[]) {
   const [map, setMap] = useState<Record<string, Assignment>>({})
   const [me, setMe] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const targetIdsKey = useMemo(() => targetIds.slice(0, 200).join(','), [targetIds])
 
   const load = useCallback(async () => {
-    if (targetIds.length === 0) {
+    if (!targetIdsKey) {
       setMap({})
       return
     }
     const params = new URLSearchParams({
       queueKey,
-      targetIds: targetIds.slice(0, 200).join(','),
+      targetIds: targetIdsKey,
     })
     const res = await fetch(`/api/admin/queue-assign?${params.toString()}`)
     if (!res.ok) return
@@ -34,7 +35,7 @@ export function useQueueAssignments(queueKey: QueueKey, targetIds: string[]) {
       next[row.target_id] = row
     }
     setMap(next)
-  }, [queueKey, targetIds.join(',')])
+  }, [queueKey, targetIdsKey])
 
   useEffect(() => {
     void load()

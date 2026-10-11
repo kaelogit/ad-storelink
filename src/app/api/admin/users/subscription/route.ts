@@ -95,6 +95,13 @@ export async function POST(request: Request) {
     )
   }
 
+  if (userId === auth.userId) {
+    return NextResponse.json(
+      { error: 'cannot_manage_own_subscription', hint: 'Another admin must change your membership.' },
+      { status: 403 }
+    )
+  }
+
   if (!ALLOWED_ACTIONS.has(action)) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
   }
@@ -245,7 +252,9 @@ export async function POST(request: Request) {
   })
 
   if (rpcError) {
-    return NextResponse.json({ error: rpcError.message, refund: refundResult }, { status: 400 })
+    const message = rpcError.message || 'Subscription change failed'
+    const status = /cannot_manage_own_subscription/i.test(message) ? 403 : 400
+    return NextResponse.json({ error: message, refund: refundResult }, { status })
   }
 
   await auth.supabase.from('admin_audit_logs').insert({

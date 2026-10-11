@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
+import { createServiceSupabaseClient } from '../../../../../utils/supabase/service'
 
 type MarkPaidPayload = {
   orderId?: string
@@ -75,21 +76,28 @@ export async function POST(request: Request) {
   }
 
   // Defensive backfill for pre-trigger orders: ensure redeemed coins are deducted once.
+  // Gap 1: coin ledger RPCs are service_role-only.
   const coinsRedeemed = Number(order.coin_redeemed || 0)
+  const service = createServiceSupabaseClient()
   if (coinsRedeemed > 0) {
-    const { error: coinDeductError } = await auth.supabase.rpc('deduct_coins_for_order', {
-      p_amount: coinsRedeemed,
-      p_order_id: orderId,
-      p_user_id: order.user_id,
-    })
-    if (coinDeductError && !coinDeductError.message.includes('duplicate')) {
-      return NextResponse.json({ error: coinDeductError.message }, { status: 409 })
+    try {
+      const { error: coinDeductError } = await service.rpc('deduct_coins_for_order', {
+        p_amount: coinsRedeemed,
+        p_order_id: orderId,
+        p_user_id: order.user_id,
+      })
+      if (coinDeductError && !coinDeductError.message.includes('duplicate')) {
+        return NextResponse.json({ error: coinDeductError.message }, { status: 409 })
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Coin deduct unavailable'
+      return NextResponse.json({ error: msg }, { status: 503 })
     }
   }
 
   if (order.chat_id && order.user_id) {
     const orderRef = orderId.slice(0, 8).toUpperCase()
-    await auth.supabase.from('messages').insert({
+    await service.from('messages').insert({
       conversation_id: order.chat_id,
       sender_id: order.user_id,
       text: `💰 PAYMENT SECURED for Order #${orderRef}! Seller, please ship the item.`,

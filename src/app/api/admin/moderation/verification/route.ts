@@ -14,7 +14,6 @@ export async function POST(request: Request) {
   if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status })
   }
-  let failedStep: 'merchant_verifications_update' | 'profiles_update' | 'admin_audit_logs_insert' | null = null
 
   const body = (await request.json()) as VerificationPayload
   const requestId = body.requestId?.trim()
@@ -37,74 +36,34 @@ export async function POST(request: Request) {
     )
   }
 
-  const { error: updateError } = await auth.supabase
-    .from('merchant_verifications')
-    .update({
-      status: decision === 'verified' ? 'approved' : 'rejected',
-      rejection_reason: decision === 'rejected' ? reason : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', requestId)
-
-  if (updateError) {
-    failedStep = 'merchant_verifications_update'
+  if (auth.userId === profileId) {
     return NextResponse.json(
-      { error: updateError.message, debug: { failedStep, requestId, profileId, decision } },
-      { status: 400 }
+      { error: 'You cannot approve or reject your own KYC. Another admin must review it.' },
+      { status: 403 }
     )
   }
 
-  // Keep profiles.verification_status in sync so the app shows correct state
-  const { error: profileError } = await auth.supabase
-    .from('profiles')
-    .update({
-      ...(decision === 'verified'
-        ? { is_verified: true, verification_status: 'verified' }
-        : { verification_status: 'rejected' }),
-    })
-    .eq('id', profileId)
-
-  if (profileError) {
-    failedStep = 'profiles_update'
-    return NextResponse.json(
-      { error: profileError.message, debug: { failedStep, requestId, profileId, decision } },
-      { status: 400 }
-    )
-  }
-
-  const { error: auditError } = await auth.supabase.from('admin_audit_logs').insert({
-    admin_id: auth.userId,
-    admin_email: auth.email,
-    action_type: 'KYC_VERIFICATION',
-    target_id: profileId,
-    // `admin_audit_logs.details` is `jsonb`, so we must insert an object (not a plain string).
-    details: {
-      message: `Merchant ${decision === 'verified' ? 'Approved' : 'Rejected'}.`,
-      requestId,
-      profileId,
-      decision,
-      ...(decision === 'rejected'
-        ? { reasonCategory, reason }
-        : {}),
-    },
+  const { data, error } = await auth.supabase.rpc('admin_decide_merchant_verification', {
+    p_request_id: requestId,
+    p_profile_id: profileId,
+    p_decision: decision,
+    p_reason: reason ?? null,
+    p_reason_category: reasonCategory,
   })
 
-  if (auditError) {
-    failedStep = 'admin_audit_logs_insert'
-    // Do not block moderation outcome on audit write failures.
-    // Verification/rejection is the core action; audit logging is best-effort.
-    return NextResponse.json({
-      ok: true,
-      warning: 'Moderation applied, but audit log insert failed.',
-      debug: {
-        failedStep,
-        requestId,
-        profileId,
-        decision,
-        auditError: auditError.message,
+  if (error) {
+    const msg = error.message || ''
+    const isSelf = /cannot_decide_own_verification/i.test(msg)
+    return NextResponse.json(
+      {
+        error: isSelf
+          ? 'You cannot approve or reject your own KYC. Another admin must review it.'
+          : msg,
+        debug: { failedStep: 'admin_decide_merchant_verification', requestId, profileId, decision },
       },
-    })
+      { status: isSelf ? 403 : 400 }
+    )
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, ...(typeof data === 'object' && data ? data : {}) })
 }

@@ -76,6 +76,21 @@ type BookingDetail = {
   policy_url?: string
 }
 
+function bookingIsPaidInFull(booking: BookingDetail): boolean {
+  const paymentState = String(booking.booking_timeline?.payment_state || '').toLowerCase()
+  if (paymentState === 'paid_in_full') return true
+  const held = Number(booking.escrow_breakdown?.amount_minor_held ?? 0)
+  const total = Number(booking.escrow_breakdown?.amount_minor_total ?? booking.amount_minor ?? 0)
+  return total > 0 && held >= total
+}
+
+function bookingBlocksForceComplete(booking: BookingDetail): boolean {
+  const deposit = Boolean(booking.booking_timeline?.deposit_enabled_snapshot)
+  const paymentState = String(booking.booking_timeline?.payment_state || '').toLowerCase()
+  if (deposit && paymentState !== 'paid_in_full') return true
+  return !bookingIsPaidInFull(booking)
+}
+
 function fromSmallestUnit(amountMinor: number, currencyCode: string): number {
   const code = (currencyCode || 'NGN').toUpperCase()
   const decimals = ['XOF', 'RWF'].includes(code) ? 0 : 2
@@ -211,6 +226,15 @@ export default function BookingsPage() {
     category: string
   }) => {
     if (!booking?.id) return
+    if (status === 'completed' && bookingBlocksForceComplete(booking)) {
+      setFeedback({
+        tone: 'error',
+        message:
+          'Cannot force-complete until this booking is paid in full (deposit balance still due or escrow underfunded).',
+      })
+      setPendingStatus(null)
+      return
+    }
     setActionLoading(true)
     setFeedback({ tone: 'info', message: `Applying ${status}...` })
     const response = await fetch('/api/admin/bookings/force-status', {
@@ -593,13 +617,27 @@ export default function BookingsPage() {
                     </h4>
                     <div className="space-y-2">
                       <button
-                        disabled={actionLoading}
+                        disabled={actionLoading || (booking ? bookingBlocksForceComplete(booking) : false)}
                         onClick={() => setPendingStatus('completed')}
-                        className="w-full bg-white border border-red-200 text-red-700 font-bold py-2 rounded text-xs hover:bg-red-100 transition flex items-center justify-center gap-2"
+                        title={
+                          booking && bookingBlocksForceComplete(booking)
+                            ? 'Blocked until deposit booking is paid in full (escrow fully funded).'
+                            : undefined
+                        }
+                        className="w-full bg-white border border-red-200 text-red-700 font-bold py-2 rounded text-xs hover:bg-red-100 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
                         Force Complete
                       </button>
+                      {booking && bookingBlocksForceComplete(booking) ? (
+                        <p className="text-[10px] text-red-700/80 leading-snug">
+                          Force Complete is blocked until payment is paid in full
+                          {booking.booking_timeline?.payment_state
+                            ? ` (now: ${booking.booking_timeline.payment_state})`
+                            : ''}
+                          .
+                        </p>
+                      ) : null}
                       <button
                         disabled={actionLoading}
                         onClick={() => setPendingStatus('cancelled')}
@@ -764,7 +802,7 @@ export default function BookingsPage() {
         description="Provide a reason for this admin intervention."
         impactSummary={
           pendingStatus === 'completed'
-            ? 'Booking will be marked complete; escrow 70% can be released.'
+            ? 'Booking will be marked complete only if escrow is paid in full; otherwise the server rejects the action.'
             : pendingStatus === 'cancelled'
               ? 'Booking will be cancelled without running a payment refund. Use for unpaid/invalid bookings.'
               : 'Booking will be marked refunded and refund execution will be attempted. Use for approved dispute outcomes.'

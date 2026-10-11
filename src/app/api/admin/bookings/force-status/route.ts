@@ -265,6 +265,40 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, idempotent: true })
   }
 
+  if (newStatus === 'completed') {
+    const { data: soGate, error: soGateErr } = await auth.supabase
+      .from('service_orders')
+      .select('id, amount_minor, payment_state, deposit_enabled_snapshot')
+      .eq('id', serviceOrderId)
+      .maybeSingle()
+    if (soGateErr || !soGate) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
+    }
+    const paymentState = String(soGate.payment_state || '').toLowerCase()
+    const deposit = Boolean(soGate.deposit_enabled_snapshot)
+    if (deposit && paymentState !== 'paid_in_full') {
+      return NextResponse.json(
+        {
+          error: `Cannot force-complete: deposit booking is not paid in full (payment_state=${soGate.payment_state || 'null'}).`,
+        },
+        { status: 400 },
+      )
+    }
+    const { data: heldRaw } = await auth.supabase.rpc('service_order_held_minor', {
+      p_service_order_id: serviceOrderId,
+    })
+    const held = Number(heldRaw ?? 0)
+    const total = Number(soGate.amount_minor ?? 0)
+    if (total > 0 && held < total && paymentState !== 'paid_in_full') {
+      return NextResponse.json(
+        {
+          error: `Cannot force-complete: escrow held (${held}) is below package total (${total}).`,
+        },
+        { status: 400 },
+      )
+    }
+  }
+
   let refundResult: {
     executed: boolean
     orderId?: string
@@ -421,52 +455,55 @@ export async function POST(request: Request) {
       clawbackCapMinor,
     }
 
-    // Clawback capped by released-from-held (never full package when only deposit was funded).
-    if (clawbackCapMinor > 0 && so.seller_id && so.buyer_id) {
-      const debtPayload = {
-        service_order_id: so.id,
-        order_id: perOrderResults[0]?.orderId || null,
-        seller_id: so.seller_id,
-        buyer_id: so.buyer_id,
-        currency_code: so.currency_code || perOrderResults[0]?.currencyCode || 'NGN',
-        amount_minor: clawbackCapMinor,
-        reason: `Company-funded refund after dispute. Recover released payout (capped by held funds ${heldMinor}). Booking: ${so.id}`,
-        status: 'open',
-        paid_at: null,
-        paid_reference: null,
-      }
-      const { data: debtRow, error: debtError } = await auth.supabase
-        .from('seller_clawback_debts')
-        .upsert(debtPayload, { onConflict: 'service_order_id' })
-        .select('id, amount_minor, currency_code, seller_id')
-        .single()
-      if (debtError || !debtRow) {
-        return NextResponse.json(
-          {
-            error: `Refund completed but clawback debt creation failed: ${debtError?.message || 'unknown error'}`,
-            refund: refundResult,
-          },
-          { status: 500 },
-        )
-      }
-      clawbackDebt = {
-        id: debtRow.id,
-        amountMinor: Number(debtRow.amount_minor || 0),
-        currencyCode: debtRow.currency_code || 'NGN',
-        sellerId: debtRow.seller_id,
-      }
-    }
+    // Clawback is created inside admin_force_service_order_status (same DB transaction as status).
+    // Paystack refunds must already be processed above.
   }
 
-  const { data, error } = await auth.supabase.rpc('admin_force_service_order_status', {
+  const forceArgs: Record<string, unknown> = {
     p_service_order_id: serviceOrderId,
     p_new_status: newStatus,
     p_reason_category: reasonCategory,
     p_reason: reason,
-  })
+  }
+  const clawbackCapForForce = Number(refundResult.clawbackCapMinor || 0)
+  if (newStatus === 'refunded' && clawbackCapForForce > 0) {
+    const linkedOrderId = refundResult.orders?.[0]?.orderId || refundResult.orderId
+    if (!linkedOrderId) {
+      return NextResponse.json(
+        {
+          error: 'Refund completed but clawback requires a linked order id before status flip.',
+          refund: refundResult,
+        },
+        { status: 500 },
+      )
+    }
+    forceArgs.p_clawback_order_id = linkedOrderId
+    forceArgs.p_clawback_amount_minor = clawbackCapForForce
+    forceArgs.p_clawback_currency_code = refundResult.currencyCode || 'NGN'
+  }
+
+  const { data, error } = await auth.supabase.rpc('admin_force_service_order_status', forceArgs)
 
   if (error) {
     return NextResponse.json({ error: error.message, refund: refundResult }, { status: 400 })
+  }
+
+  const forcePayload = (data ?? {}) as {
+    ok?: boolean
+    clawback_debt?: {
+      id?: string
+      amount_minor?: number
+      currency_code?: string
+      seller_id?: string
+    } | null
+  }
+  if (forcePayload.clawback_debt?.id) {
+    clawbackDebt = {
+      id: forcePayload.clawback_debt.id,
+      amountMinor: Number(forcePayload.clawback_debt.amount_minor || 0),
+      currencyCode: forcePayload.clawback_debt.currency_code || 'NGN',
+      sellerId: forcePayload.clawback_debt.seller_id || '',
+    }
   }
 
   await auth.supabase.from('admin_audit_logs').insert({

@@ -125,6 +125,14 @@ function canIssueCredit(row: AdCampaignRow): boolean {
   return unusedMinor(row) >= 100
 }
 
+function canApprove(row: AdCampaignRow): boolean {
+  return row.status === 'pending_review' && row.refund_status !== 'credited'
+}
+
+function canResume(row: AdCampaignRow): boolean {
+  return row.status === 'paused' && row.refund_status !== 'credited'
+}
+
 function moneyMinor(minor: number, currency = 'NGN') {
   const main = Number(minor || 0) / 100
   try {
@@ -723,31 +731,31 @@ export default function AdsCampaignsPage() {
                       {!canWrite ? (
                         <span className="text-[11px] text-zinc-400">Read only</span>
                       ) : null}
+                      {canWrite && canApprove(row) ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            setConfirmAction({
+                              campaignId: row.id,
+                              action: 'approve',
+                              name: row.name || 'campaign',
+                            })
+                          }
+                          className="rounded border border-emerald-200 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                      ) : null}
                       {canWrite && row.status === 'pending_review' ? (
-                        <>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              setConfirmAction({
-                                campaignId: row.id,
-                                action: 'approve',
-                                name: row.name || 'campaign',
-                              })
-                            }
-                            className="rounded border border-emerald-200 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => setRejectTarget(row)}
-                            className="rounded border border-red-200 px-2 py-1 text-xs text-red-700 disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setRejectTarget(row)}
+                          className="rounded border border-red-200 px-2 py-1 text-xs text-red-700 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
                       ) : null}
                       {canWrite && row.status === 'active' ? (
                         <button
@@ -765,7 +773,7 @@ export default function AdsCampaignsPage() {
                           Pause
                         </button>
                       ) : null}
-                      {canWrite && row.status === 'paused' ? (
+                      {canWrite && canResume(row) ? (
                         <button
                           type="button"
                           disabled={busy}
