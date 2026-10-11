@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
@@ -13,9 +14,22 @@ import { ChatCommerceLinksPanel } from '../../../components/admin/ChatCommerceLi
 import { isActiveProductOrderDispute } from '../../../utils/disputeChat'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
-import { 
-  Search, Package, Truck, CheckCircle, XCircle, AlertTriangle, 
-  MapPin, User, Loader2, RefreshCcw
+import {
+  Search,
+  Package,
+  Truck,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  MapPin,
+  User,
+  Loader2,
+  RefreshCcw,
+  CreditCard,
+  Copy,
+  ArrowLeft,
+  ExternalLink,
+  Coins,
 } from 'lucide-react'
 
 type OrderListRow = {
@@ -29,6 +43,25 @@ type OrderListRow = {
   item_count: number
   created_at: string
 }
+
+type OrderParty = {
+  id?: string | null
+  name?: string | null
+  display_name?: string | null
+  slug?: string | null
+  email?: string | null
+  phone?: string | null
+}
+
+type OrderItem = {
+  name?: string | null
+  quantity?: number | null
+  price?: number | null
+  image?: string | null
+}
+
+const TERMINAL_STATUSES = new Set(['COMPLETED', 'CANCELLED'])
+const PAID_LIKE = new Set(['PAID', 'SHIPPED', 'COMPLETED', 'DISPUTED'])
 
 export default function OrderOps() {
   const supabase = createClient()
@@ -112,7 +145,7 @@ export default function OrderOps() {
           tone: 'error',
           message:
             error.message ||
-            'Failed to load orders. Apply migration 20261120800000 if get_admin_orders is missing.',
+            'Failed to load orders. Apply migration 20261120810000 if get_admin_orders is missing.',
         })
       }
     }
@@ -161,7 +194,7 @@ export default function OrderOps() {
   }) => {
     setActionLoading(true)
     setFeedback({ tone: 'info', message: `Applying order status ${status}...` })
-    
+
     const response = await fetch('/api/admin/orders/force-status', {
       method: 'POST',
       headers: {
@@ -201,10 +234,34 @@ export default function OrderOps() {
     setActionLoading(false)
   }
 
+  const filteredList = useMemo(() => {
+    const q = listQuery.trim().toLowerCase()
+    if (!q) return list
+    return list.filter(
+      (row) =>
+        row.id.toLowerCase().includes(q) ||
+        (row.payment_reference || '').toLowerCase().includes(q) ||
+        (row.buyer_display_name || '').toLowerCase().includes(q) ||
+        (row.seller_display_name || '').toLowerCase().includes(q) ||
+        (row.status || '').toLowerCase().includes(q)
+    )
+  }, [list, listQuery])
+
+  const status = String(order?.status || '').toUpperCase()
+  const isTerminal = TERMINAL_STATUSES.has(status)
+  const items: OrderItem[] = Array.isArray(order?.items) ? order.items : []
+
+  const copyText = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setFeedback({ tone: 'success', message: `${label} copied.` })
+    } catch {
+      setFeedback({ tone: 'error', message: `Could not copy ${label}.` })
+    }
+  }
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      
-      {/* Header & Search */}
       <PageHeader
         title="Transaction Ops"
         subtitle="Browse every product order, click for full detail, or look up by UUID / Paystack ref. Stuck AWAITING_PAYMENT → Payment incidents."
@@ -224,7 +281,10 @@ export default function OrderOps() {
       <div className="flex gap-2 border-b border-gray-200">
         <button
           type="button"
-          onClick={() => setActiveTab('list')}
+          onClick={() => {
+            setActiveTab('list')
+            setOrder(null)
+          }}
           className={`px-4 py-2 text-sm font-bold ${activeTab === 'list' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
         >
           Recent orders
@@ -275,17 +335,7 @@ export default function OrderOps() {
             <div className="flex justify-center py-12">
               <Loader2 className="h-7 w-7 animate-spin text-blue-600" />
             </div>
-          ) : list.filter((row) => {
-              const q = listQuery.trim().toLowerCase()
-              if (!q) return true
-              return (
-                row.id.toLowerCase().includes(q) ||
-                (row.payment_reference || '').toLowerCase().includes(q) ||
-                (row.buyer_display_name || '').toLowerCase().includes(q) ||
-                (row.seller_display_name || '').toLowerCase().includes(q) ||
-                (row.status || '').toLowerCase().includes(q)
-              )
-            }).length === 0 ? (
+          ) : filteredList.length === 0 ? (
             <EmptyState icon={Package} message="No product orders for this filter yet." />
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -302,39 +352,27 @@ export default function OrderOps() {
                   </tr>
                 </thead>
                 <tbody>
-                  {list
-                    .filter((row) => {
-                      const q = listQuery.trim().toLowerCase()
-                      if (!q) return true
-                      return (
-                        row.id.toLowerCase().includes(q) ||
-                        (row.payment_reference || '').toLowerCase().includes(q) ||
-                        (row.buyer_display_name || '').toLowerCase().includes(q) ||
-                        (row.seller_display_name || '').toLowerCase().includes(q) ||
-                        (row.status || '').toLowerCase().includes(q)
-                      )
-                    })
-                    .map((row) => (
-                      <tr
-                        key={row.id}
-                        className="border-b border-gray-100 hover:bg-blue-50/70 cursor-pointer"
-                        onClick={() => void openOrderByQuery(row.id)}
-                      >
-                        <td className="p-3 font-mono text-xs">{row.id.slice(0, 8)}…</td>
-                        <td className={`p-3 font-bold ${getStatusColor(row.status)}`}>{row.status}</td>
-                        <td className="p-3 font-mono">
-                          {row.currency_code} {Number(row.total_amount || 0).toLocaleString()}
-                        </td>
-                        <td className="p-3">{row.buyer_display_name}</td>
-                        <td className="p-3">{row.seller_display_name}</td>
-                        <td className="p-3 font-mono text-xs text-gray-500">
-                          {row.payment_reference || '—'}
-                        </td>
-                        <td className="p-3 text-gray-500">
-                          {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
-                        </td>
-                      </tr>
-                    ))}
+                  {filteredList.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="border-b border-gray-100 hover:bg-blue-50/70 cursor-pointer"
+                      onClick={() => void openOrderByQuery(row.id)}
+                    >
+                      <td className="p-3 font-mono text-xs">{row.id.slice(0, 8)}…</td>
+                      <td className="p-3">
+                        <StatusChip status={row.status} />
+                      </td>
+                      <td className="p-3 font-mono">
+                        {row.currency_code} {Number(row.total_amount || 0).toLocaleString()}
+                      </td>
+                      <td className="p-3">{row.buyer_display_name}</td>
+                      <td className="p-3">{row.seller_display_name}</td>
+                      <td className="p-3 font-mono text-xs text-gray-500">{row.payment_reference || '—'}</td>
+                      <td className="p-3 text-gray-500">
+                        {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -343,226 +381,289 @@ export default function OrderOps() {
       )}
 
       {activeTab === 'lookup' && (
-      <>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <form onSubmit={searchOrder} className="flex gap-2 w-full md:w-96">
-            <div className="relative flex-1">
+        <>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <form onSubmit={searchOrder} className="flex gap-2 w-full md:w-[28rem]">
+              <div className="relative flex-1">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                <input 
-                    type="text" 
-                    placeholder="Paste Order UUID or Paystack Ref..." 
-                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-(--primary) text-sm font-mono"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                <input
+                  type="text"
+                  placeholder="Paste Order UUID or Paystack Ref..."
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-(--primary) text-sm font-mono"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
                 />
-            </div>
-            <button type="submit" disabled={loading} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-black transition">
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-black transition"
+              >
                 {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Lookup'}
-            </button>
-        </form>
-      </div>
+              </button>
+            </form>
+            {order ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('list')
+                  setOrder(null)
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-gray-900"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back to recent orders
+              </button>
+            ) : null}
+          </div>
 
-      {/* Main Content */}
-      {order ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* LEFT: Timeline & Status */}
-            <div className="lg:col-span-2 space-y-6">
-                
-                {/* Status Card */}
-                <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex justify-between items-center">
-                    <div>
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Current Status</p>
-                        <span className={`text-2xl font-black ${getStatusColor(order.status)}`}>{order.status}</span>
-                        {order.dispute && (
-                            <div className="mt-2 flex items-center gap-2 text-orange-600 bg-orange-50 px-2 py-1 rounded text-xs font-bold w-fit">
-                                <AlertTriangle size={12} /> Dispute Active: {order.dispute.reason}
-                            </div>
-                        )}
-                    </div>
-                    <div className="text-right">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Total Value</p>
-                        <span className="text-2xl font-mono text-gray-900">{order.currency} {order.amount.toLocaleString()}</span>
-                    </div>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Coins Redeemed (Order)</p>
-                    <p className="text-sm font-black text-gray-900">{Number(order.coin_redeemed || 0).toLocaleString()}</p>
-                  </div>
-                  <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Buyer Coin Balance (Now)</p>
-                    <p className="text-sm font-black text-gray-900">{Number(order.buyer_coin_balance || 0).toLocaleString()}</p>
-                  </div>
-                </div>
-
-                {order.chat_id ? (
-                  <ChatCommerceLinksPanel
-                    key={`order-chat-${order.chat_id}`}
-                    chatId={order.chat_id}
-                    title="Chat commerce context"
-                    description="Orders and bookings in the same P2P thread as this order. Open P2P viewer for full transcript."
-                  />
-                ) : null}
-
-                {order.chat_id && isActiveProductOrderDispute(order) && (
-                  <DisputeChatTranscriptPanel
-                    key={order.id}
-                    title="Order chat (dispute)"
-                    description="Load the buyer–seller thread for this order. Access is limited to active disputes; each load is written to the audit log. Use only for resolving this case."
-                    conversationId={order.chat_id}
-                    entityId={order.id}
-                    endpoint="/api/admin/orders/order-chat"
-                    requestBody={{ orderId: order.id }}
-                    onLoaded={(count) =>
-                      setFeedback({
-                        tone: 'info',
-                        message: `Loaded ${count} message(s). View is audit-logged.`,
-                      })
-                    }
-                  />
-                )}
-
-                {/* The Timeline */}
-                <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    <h3 className="text-sm font-bold text-gray-900 mb-6">Order Timeline</h3>
-                    <div className="space-y-6 relative pl-2">
-                        {/* Vertical Line */}
-                        <div className="absolute left-[19px] top-2 bottom-2 w-0.5 bg-gray-100"></div>
-
-                        <TimelineItem 
-                            icon={Package} 
-                            label="Order Created" 
-                            date={order.created_at} 
-                            active={true} 
-                        />
-                        <TimelineItem 
-                            icon={CheckCircle} 
-                            label="Payment Secured (Escrow)" 
-                            date={order.created_at} 
-                            active={true} 
-                        />
-                        <TimelineItem 
-                            icon={Truck} 
-                            label="Marked as Shipped" 
-                            date={order.shipped_at} 
-                            active={!!order.shipped_at} 
-                        />
-                        <TimelineItem 
-                            icon={CheckCircle} 
-                            label="Completed & Funds Released" 
-                            date={order.status === 'COMPLETED' ? order.updated_at : null} 
-                            active={order.status === 'COMPLETED'} 
-                            isLast
-                        />
-                    </div>
-                </div>
-
-            </div>
-
-            {/* RIGHT: Participants & Controls */}
-            <div className="lg:col-span-1 space-y-6">
-                
-                {/* Participants */}
-                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-                    <div className="p-4 bg-gray-50 border-b border-gray-200 font-bold text-xs text-gray-500 uppercase">Parties Involved</div>
-                    <div className="p-4 space-y-4">
-                        <div className="flex items-start gap-3">
-                            <div className="rounded-full p-2" style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)', color: 'var(--primary)' }}><User size={16} /></div>
-                            <div>
-                                <p className="text-xs font-bold text-gray-400 uppercase">Buyer</p>
-                                <p className="font-bold text-gray-900">{order.buyer.name}</p>
-                                <p className="text-xs text-gray-500">{order.buyer.email}</p>
-                                <p className="text-xs text-gray-500">{order.buyer.phone}</p>
-                            </div>
-                        </div>
-                        <hr className="border-gray-100" />
-                        <div className="flex items-start gap-3">
-                            <div className="bg-purple-100 p-2 rounded-full text-purple-600"><User size={16} /></div>
-                            <div>
-                                <p className="text-xs font-bold text-gray-400 uppercase">Seller</p>
-                                <p className="font-bold text-gray-900">{order.seller.name}</p>
-                                <p className="text-xs text-gray-500">{order.seller.email}</p>
-                                <p className="text-xs text-gray-500">{order.seller.phone}</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Shipping Info */}
-                <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
-                    <div className="flex items-start gap-3">
-                        <div className="bg-gray-100 p-2 rounded-full text-gray-600"><MapPin size={16} /></div>
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase">Delivery Address</p>
-                            <p className="text-sm text-gray-800 mt-1 leading-relaxed">{order.shipping_address}</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Paystack reconciliation (when webhook/callback failed) */}
-                {order.status === 'AWAITING_PAYMENT' && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                    <h4 className="text-xs font-bold text-amber-800 uppercase mb-2">Mark as paid (Paystack reference)</h4>
-                    <p className="text-[10px] text-amber-700 mb-3">
-                      Use when the customer paid but callback/webhook failed. Enter the Paystack transaction reference.
-                    </p>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="e.g. T1234567890"
-                        className="flex-1 px-3 py-2 border border-amber-200 rounded-lg text-sm font-mono"
-                        value={markPaidRef}
-                        onChange={(e) => setMarkPaidRef(e.target.value)}
-                      />
-                      <button
-                        type="button"
-                        disabled={!markPaidRef.trim() || markPaidLoading}
-                        onClick={markOrderPaidByReference}
-                        className="bg-amber-600 text-white font-bold px-3 py-2 rounded-lg text-xs hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2"
-                      >
-                        {markPaidLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                        Mark paid
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* INTERVENTION ZONE (Danger) */}
-                <div className="bg-red-50 border border-red-100 rounded-xl p-4">
-                    <h4 className="text-xs font-bold text-red-800 uppercase mb-3 flex items-center gap-2">
-                        <AlertTriangle size={14} /> Intervention Zone
-                    </h4>
-                    <p className="text-[10px] text-red-600/80 mb-4">
-                        Manually overriding order status skips normal safety checks. Use with caution.
-                    </p>
-                    <div className="space-y-2">
-                        <button 
-                            disabled={actionLoading}
-                            onClick={() => setPendingStatus('COMPLETED')}
-                            className="w-full bg-white border border-red-200 text-red-700 font-bold py-2 rounded text-xs hover:bg-red-100 transition flex items-center justify-center gap-2"
+          {order ? (
+            <div className="space-y-6">
+              {/* Case header */}
+              <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+                <div className="flex flex-col lg:flex-row lg:items-stretch">
+                  <div className="flex-1 p-5 lg:p-6 space-y-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusChip status={status} large />
+                      {order.dispute ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700">
+                          <AlertTriangle size={12} /> Dispute: {order.dispute.reason}
+                        </span>
+                      ) : null}
+                      {status === 'AWAITING_PAYMENT' && !order.reference ? (
+                        <Link
+                          href="/dashboard/payment-incidents"
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:bg-amber-100"
                         >
-                            {actionLoading ? <Loader2 size={14} className="animate-spin"/> : <RefreshCcw size={14}/>}
-                            Force Complete (Release)
+                          Stuck payments queue <ExternalLink size={11} />
+                        </Link>
+                      ) : null}
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Order</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <p className="font-mono text-sm text-gray-900 break-all">{order.id}</p>
+                        <button
+                          type="button"
+                          onClick={() => void copyText(String(order.id), 'Order ID')}
+                          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50"
+                        >
+                          <Copy size={12} /> Copy
                         </button>
-                        <button 
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <MetaTile
+                        icon={CreditCard}
+                        label="Paystack ref"
+                        value={order.reference || '—'}
+                        mono
+                        onCopy={order.reference ? () => void copyText(String(order.reference), 'Paystack ref') : undefined}
+                      />
+                      <MetaTile
+                        icon={Package}
+                        label="Total"
+                        value={`${order.currency || 'NGN'} ${Number(order.amount || 0).toLocaleString()}`}
+                        mono
+                      />
+                      <MetaTile
+                        icon={Coins}
+                        label="Coins redeemed"
+                        value={Number(order.coin_redeemed || 0).toLocaleString()}
+                      />
+                      <MetaTile
+                        icon={Coins}
+                        label="Buyer coin balance (now)"
+                        value={Number(order.buyer_coin_balance || 0).toLocaleString()}
+                      />
+                    </div>
+                  </div>
+                  <div className="lg:w-72 border-t lg:border-t-0 lg:border-l border-gray-100 bg-gray-50/80 p-5 lg:p-6">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-3">Lifecycle</p>
+                    <OrderTimeline order={order} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 space-y-6">
+                  {/* Line items */}
+                  <section className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-gray-900">Line items</h3>
+                      <span className="text-xs text-gray-500">{items.length} item{items.length === 1 ? '' : 's'}</span>
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="p-4 text-sm text-gray-500">No line items on this order.</p>
+                    ) : (
+                      <ul className="divide-y divide-gray-100">
+                        {items.map((item, idx) => (
+                          <li key={`${item.name}-${idx}`} className="flex items-center gap-3 px-4 py-3">
+                            {item.image ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={item.image} alt="" className="h-10 w-10 rounded-lg object-cover bg-gray-100" />
+                            ) : (
+                              <div className="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-400">
+                                <Package size={16} />
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-gray-900 truncate">{item.name || 'Product'}</p>
+                              <p className="text-xs text-gray-500">Qty {item.quantity ?? 1}</p>
+                            </div>
+                            <p className="text-sm font-mono text-gray-800">
+                              {order.currency || 'NGN'} {Number(item.price || 0).toLocaleString()}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+
+                  {order.chat_id ? (
+                    <ChatCommerceLinksPanel
+                      key={`order-chat-${order.chat_id}`}
+                      chatId={order.chat_id}
+                      title="Chat commerce context"
+                      description="Orders and bookings in the same P2P thread as this order. Open P2P viewer for full transcript."
+                    />
+                  ) : null}
+
+                  {order.chat_id && isActiveProductOrderDispute(order) && (
+                    <DisputeChatTranscriptPanel
+                      key={order.id}
+                      title="Order chat (dispute)"
+                      description="Load the buyer–seller thread for this order. Access is limited to active disputes; each load is written to the audit log. Use only for resolving this case."
+                      conversationId={order.chat_id}
+                      entityId={order.id}
+                      endpoint="/api/admin/orders/order-chat"
+                      requestBody={{ orderId: order.id }}
+                      onLoaded={(count) =>
+                        setFeedback({
+                          tone: 'info',
+                          message: `Loaded ${count} message(s). View is audit-logged.`,
+                        })
+                      }
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-6">
+                  <section className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold uppercase tracking-wide text-gray-500">
+                      Parties
+                    </div>
+                    <div className="p-4 space-y-4">
+                      <PartyCard role="Buyer" party={order.buyer} accent="buyer" />
+                      <hr className="border-gray-100" />
+                      <PartyCard role="Seller" party={order.seller} accent="seller" />
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-gray-100 p-2 rounded-full text-gray-600">
+                        <MapPin size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-gray-400 uppercase">Delivery address</p>
+                        <p className="text-sm text-gray-800 mt-1 leading-relaxed whitespace-pre-wrap">
+                          {formatShippingAddress(order.shipping_address)}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  {status === 'AWAITING_PAYMENT' && (
+                    <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <h4 className="text-xs font-bold text-amber-900 uppercase mb-1 flex items-center gap-2">
+                        <CreditCard size={14} /> Reconcile payment
+                      </h4>
+                      <p className="text-[11px] text-amber-800/90 mb-3">
+                        Customer paid but webhook/callback missed? Enter the Paystack transaction reference.
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. T1234567890"
+                          className="flex-1 px-3 py-2 border border-amber-200 rounded-lg text-sm font-mono bg-white"
+                          value={markPaidRef}
+                          onChange={(e) => setMarkPaidRef(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          disabled={!markPaidRef.trim() || markPaidLoading}
+                          onClick={markOrderPaidByReference}
+                          className="bg-amber-600 text-white font-bold px-3 py-2 rounded-lg text-xs hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {markPaidLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                          Mark paid
+                        </button>
+                      </div>
+                    </section>
+                  )}
+
+                  {isTerminal ? (
+                    <section className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <h4 className="text-xs font-bold text-gray-600 uppercase mb-1">Interventions</h4>
+                      <p className="text-[11px] text-gray-500">
+                        This order is <span className="font-bold text-gray-800">{status}</span>. Force complete / cancel are closed.
+                        {status === 'COMPLETED' ? ' Funds already released.' : ' Order already cancelled.'}
+                      </p>
+                    </section>
+                  ) : (
+                    <section className="rounded-xl border border-red-200 bg-red-50 p-4">
+                      <h4 className="text-xs font-bold text-red-800 uppercase mb-2 flex items-center gap-2">
+                        <AlertTriangle size={14} /> Intervention
+                      </h4>
+                      <p className="text-[11px] text-red-700/90 mb-3">
+                        Overrides skip the normal buyer/seller flow. Always leave a reason — audited.
+                      </p>
+                      <div className="space-y-2">
+                        {status !== 'COMPLETED' && (
+                          <button
+                            type="button"
+                            disabled={actionLoading || status === 'AWAITING_PAYMENT'}
+                            title={
+                              status === 'AWAITING_PAYMENT'
+                                ? 'Mark paid first, or cancel if abandoned'
+                                : undefined
+                            }
+                            onClick={() => setPendingStatus('COMPLETED')}
+                            className="w-full bg-white border border-red-200 text-red-700 font-bold py-2 rounded-lg text-xs hover:bg-red-100 transition flex items-center justify-center gap-2 disabled:opacity-40"
+                          >
+                            {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
+                            Force complete (release)
+                          </button>
+                        )}
+                        {status !== 'CANCELLED' && (
+                          <button
+                            type="button"
                             disabled={actionLoading}
                             onClick={() => setPendingStatus('CANCELLED')}
-                            className="w-full bg-red-600 text-white font-bold py-2 rounded text-xs hover:bg-red-700 transition flex items-center justify-center gap-2"
-                        >
-                            {actionLoading ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
-                            Force Cancel (Refund)
-                        </button>
-                    </div>
+                            className="w-full bg-red-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-red-700 transition flex items-center justify-center gap-2"
+                          >
+                            {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                            Force cancel (refund)
+                          </button>
+                        )}
+                      </div>
+                      {status === 'AWAITING_PAYMENT' ? (
+                        <p className="mt-2 text-[10px] text-red-600">
+                          Prefer Cancel for abandoned checkouts. Force complete is blocked until payment is secured.
+                        </p>
+                      ) : null}
+                    </section>
+                  )}
                 </div>
-
+              </div>
             </div>
-        </div>
-      ) : (
-        <EmptyState icon={Search} message="Enter an Order ID or Reference to begin diagnostics." />
+          ) : (
+            <EmptyState icon={Search} message="Enter an Order ID or Reference to begin diagnostics." />
+          )}
+        </>
       )}
-      </>
-      )}
+
       <ActionReasonModal
         open={pendingStatus !== null}
         title={pendingStatus === 'COMPLETED' ? 'Confirm Force Complete' : 'Confirm Force Cancel'}
@@ -591,26 +692,231 @@ export default function OrderOps() {
   )
 }
 
-function TimelineItem({ icon: Icon, label, date, active, isLast }: any) {
-    return (
-        <div className="flex gap-4 relative z-10">
-            <div className={`h-9 w-9 rounded-full flex items-center justify-center border-4 ${active ? 'bg-green-600 border-green-100 text-white' : 'bg-gray-200 border-gray-50 text-gray-400'}`}>
-                <Icon size={14} />
-            </div>
-            <div className="pt-1.5">
-                <p className={`text-sm font-bold ${active ? 'text-gray-900' : 'text-gray-400'}`}>{label}</p>
-                <p className="text-xs text-gray-500 font-mono mt-0.5">{date ? new Date(date).toLocaleString() : 'Pending...'}</p>
-            </div>
-        </div>
-    )
+function partyName(party?: OrderParty | null) {
+  if (!party) return '—'
+  return (
+    party.name ||
+    party.display_name ||
+    party.slug ||
+    (party.email ? String(party.email).split('@')[0] : null) ||
+    '—'
+  )
 }
 
-function getStatusColor(status: string) {
-    switch (status) {
-        case 'COMPLETED': return 'text-green-600'
-        case 'CANCELLED': return 'text-red-600'
-        case 'PAID': return 'text-(--primary)'
-        case 'SHIPPED': return 'text-purple-600'
-        default: return 'text-gray-600'
+function PartyCard({
+  role,
+  party,
+  accent,
+}: {
+  role: string
+  party?: OrderParty | null
+  accent: 'buyer' | 'seller'
+}) {
+  const name = partyName(party)
+  return (
+    <div className="flex items-start gap-3">
+      <div
+        className={`rounded-full p-2 ${
+          accent === 'buyer'
+            ? 'text-[color:var(--primary)]'
+            : 'bg-slate-100 text-slate-700'
+        }`}
+        style={
+          accent === 'buyer'
+            ? { backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)' }
+            : undefined
+        }
+      >
+        <User size={16} />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{role}</p>
+        <p className="font-bold text-gray-900 truncate">{name}</p>
+        {party?.email ? <p className="text-xs text-gray-500 truncate">{party.email}</p> : null}
+        {party?.phone ? <p className="text-xs text-gray-500">{party.phone}</p> : null}
+        {party?.id ? (
+          <Link
+            href={`/dashboard/users?q=${encodeURIComponent(party.id)}`}
+            className="mt-1 inline-flex text-[11px] font-bold text-blue-600 hover:underline"
+          >
+            Open user
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function MetaTile({
+  icon: Icon,
+  label,
+  value,
+  mono,
+  onCopy,
+}: {
+  icon: any
+  label: string
+  value: string
+  mono?: boolean
+  onCopy?: () => void
+}) {
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
+          <Icon size={11} /> {label}
+        </p>
+        {onCopy ? (
+          <button type="button" onClick={onCopy} className="text-gray-400 hover:text-gray-700">
+            <Copy size={12} />
+          </button>
+        ) : null}
+      </div>
+      <p className={`mt-1 text-sm text-gray-900 break-all ${mono ? 'font-mono' : 'font-semibold'}`}>{value}</p>
+    </div>
+  )
+}
+
+function OrderTimeline({ order }: { order: any }) {
+  const status = String(order?.status || '').toUpperCase()
+  const paid = PAID_LIKE.has(status) || Boolean(order?.reference)
+  const shipped = Boolean(order?.shipped_at) || status === 'SHIPPED' || status === 'COMPLETED'
+  const completed = status === 'COMPLETED'
+  const cancelled = status === 'CANCELLED'
+
+  if (cancelled) {
+    return (
+      <div className="space-y-4 relative pl-1">
+        <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-gray-200" />
+        <TimelineItem icon={Package} label="Order created" date={order.created_at} state="done" />
+        <TimelineItem
+          icon={XCircle}
+          label="Cancelled"
+          date={order.updated_at}
+          state="error"
+          isLast
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4 relative pl-1">
+      <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-gray-200" />
+      <TimelineItem icon={Package} label="Order created" date={order.created_at} state="done" />
+      <TimelineItem
+        icon={CreditCard}
+        label="Payment secured"
+        date={paid ? order.created_at : null}
+        state={paid ? 'done' : 'pending'}
+        hint={!paid ? 'Awaiting Paystack' : undefined}
+      />
+      <TimelineItem
+        icon={Truck}
+        label="Shipped"
+        date={order.shipped_at}
+        state={order.shipped_at ? 'done' : completed ? 'skipped' : shipped ? 'done' : 'pending'}
+        hint={completed && !order.shipped_at ? 'Skipped / digital' : undefined}
+      />
+      <TimelineItem
+        icon={CheckCircle}
+        label="Completed · funds released"
+        date={completed ? order.updated_at : null}
+        state={completed ? 'done' : 'pending'}
+        isLast
+      />
+    </div>
+  )
+}
+
+function TimelineItem({
+  icon: Icon,
+  label,
+  date,
+  state,
+  hint,
+  isLast,
+}: {
+  icon: any
+  label: string
+  date?: string | null
+  state: 'done' | 'pending' | 'skipped' | 'error'
+  hint?: string
+  isLast?: boolean
+}) {
+  const ring =
+    state === 'done'
+      ? 'bg-emerald-600 border-emerald-100 text-white'
+      : state === 'error'
+        ? 'bg-red-600 border-red-100 text-white'
+        : state === 'skipped'
+          ? 'bg-gray-300 border-gray-100 text-white'
+          : 'bg-white border-gray-200 text-gray-400'
+  return (
+    <div className={`flex gap-3 relative z-10 ${isLast ? '' : ''}`}>
+      <div className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center border-4 ${ring}`}>
+        <Icon size={13} />
+      </div>
+      <div className="pt-0.5 min-w-0">
+        <p
+          className={`text-xs font-bold ${
+            state === 'done' || state === 'error' ? 'text-gray-900' : 'text-gray-400'
+          }`}
+        >
+          {label}
+        </p>
+        <p className="text-[11px] text-gray-500 font-mono mt-0.5">
+          {date ? new Date(date).toLocaleString() : state === 'skipped' ? 'Not recorded' : 'Pending…'}
+        </p>
+        {hint ? <p className="text-[10px] text-gray-400 mt-0.5">{hint}</p> : null}
+      </div>
+    </div>
+  )
+}
+
+function StatusChip({ status, large }: { status: string; large?: boolean }) {
+  const s = String(status || '').toUpperCase()
+  const styles: Record<string, string> = {
+    COMPLETED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    CANCELLED: 'bg-red-50 text-red-700 ring-red-200',
+    PAID: 'bg-sky-50 text-sky-700 ring-sky-200',
+    SHIPPED: 'bg-violet-50 text-violet-700 ring-violet-200',
+    DISPUTED: 'bg-orange-50 text-orange-700 ring-orange-200',
+    AWAITING_PAYMENT: 'bg-amber-50 text-amber-800 ring-amber-200',
+  }
+  const cls = styles[s] || 'bg-gray-50 text-gray-700 ring-gray-200'
+  return (
+    <span
+      className={`inline-flex items-center rounded-full ring-1 font-bold ${cls} ${
+        large ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[11px]'
+      }`}
+    >
+      {s || 'UNKNOWN'}
+    </span>
+  )
+}
+
+function formatShippingAddress(raw: unknown): string {
+  if (!raw) return '—'
+  if (typeof raw === 'string') return raw
+  if (typeof raw === 'object') {
+    const o = raw as Record<string, unknown>
+    const parts = [
+      o.line1 || o.address_line1 || o.street,
+      o.line2 || o.address_line2,
+      o.city,
+      o.state || o.region,
+      o.postal_code || o.zip,
+      o.country,
+    ]
+      .map((p) => (typeof p === 'string' ? p.trim() : ''))
+      .filter(Boolean)
+    if (parts.length) return parts.join(', ')
+    try {
+      return JSON.stringify(raw)
+    } catch {
+      return '—'
     }
+  }
+  return String(raw)
 }
