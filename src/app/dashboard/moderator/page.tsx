@@ -16,6 +16,7 @@ import {
 import { AdminAvatar } from '../../../components/admin/AdminAvatar'
 import { useAdminRole } from '../../../hooks/useAdminRole'
 import { AssigneeChip, useQueueAssignments } from '../../../hooks/useQueueAssignments'
+import { resolveAdminKycMedia } from '../../../utils/kycMedia'
 
 type ModTab = 'kyc' | 'business' | 'abuse' | 'cases' | 'appeals'
 
@@ -38,6 +39,14 @@ export default function ModeratorPage() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [idImageError, setIdImageError] = useState(false)
   const [faceImageError, setFaceImageError] = useState(false)
+  const [idPreviewUrl, setIdPreviewUrl] = useState<string | null>(null)
+  const [facePreviewUrl, setFacePreviewUrl] = useState<string | null>(null)
+  const [certPreviewUrl, setCertPreviewUrl] = useState<string | null>(null)
+  const [idPreviewError, setIdPreviewError] = useState<string | null>(null)
+  const [facePreviewError, setFacePreviewError] = useState<string | null>(null)
+  const [certPreviewError, setCertPreviewError] = useState<string | null>(null)
+  const [kycPreviewLoading, setKycPreviewLoading] = useState(false)
+  const [certPreviewLoading, setCertPreviewLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [pendingVerification, setPendingVerification] = useState<{
     requestId: string
@@ -156,11 +165,60 @@ export default function ModeratorPage() {
   useEffect(() => {
     setIdImageError(false)
     setFaceImageError(false)
+    setIdPreviewUrl(null)
+    setFacePreviewUrl(null)
+    setIdPreviewError(null)
+    setFacePreviewError(null)
   }, [selectedRequest?.id])
 
   useEffect(() => {
     setCertImageError(false)
+    setCertPreviewUrl(null)
+    setCertPreviewError(null)
   }, [selectedBusinessRequest?.id])
+
+  // Private KYC keys → short-lived R2 signed URLs (never use raw keys as <img src>)
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!selectedRequest) return
+      setKycPreviewLoading(true)
+      const [idResult, faceResult] = await Promise.all([
+        resolveAdminKycMedia(selectedRequest.id_url),
+        resolveAdminKycMedia(selectedRequest.face_url),
+      ])
+      if (cancelled) return
+      setIdPreviewUrl(idResult.url)
+      setFacePreviewUrl(faceResult.url)
+      setIdPreviewError(idResult.error ?? (selectedRequest.id_url && !idResult.url ? 'Preview unavailable' : null))
+      setFacePreviewError(faceResult.error ?? (selectedRequest.face_url && !faceResult.url ? 'Preview unavailable' : null))
+      setKycPreviewLoading(false)
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRequest?.id, selectedRequest?.id_url, selectedRequest?.face_url])
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!selectedBusinessRequest) return
+      setCertPreviewLoading(true)
+      const result = await resolveAdminKycMedia(selectedBusinessRequest.certificate_url)
+      if (cancelled) return
+      setCertPreviewUrl(result.url)
+      setCertPreviewError(
+        result.error ??
+          (selectedBusinessRequest.certificate_url && !result.url ? 'Preview unavailable' : null),
+      )
+      setCertPreviewLoading(false)
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedBusinessRequest?.id, selectedBusinessRequest?.certificate_url])
 
   useEffect(() => {
     let cancelled = false
@@ -755,10 +813,9 @@ export default function ModeratorPage() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {/* Identity document */}
                           <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center text-white relative group overflow-hidden">
-                            {!idImageError && selectedRequest.id_url ? (
+                            {!idImageError && idPreviewUrl ? (
                               <img
-                                src={selectedRequest.id_url}
-                                crossOrigin="anonymous"
+                                src={idPreviewUrl}
                                 referrerPolicy="no-referrer"
                                 className="w-full h-full object-contain"
                                 alt="Identity Document"
@@ -766,16 +823,25 @@ export default function ModeratorPage() {
                               />
                             ) : (
                               <div className="text-center px-4">
-                                <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
+                                {kycPreviewLoading ? (
+                                  <Loader2 size={28} className="mx-auto mb-2 opacity-40 animate-spin" />
+                                ) : (
+                                  <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
+                                )}
                                 <p className="text-[10px] opacity-50 uppercase tracking-widest font-bold">
                                   Identity Document
                                 </p>
+                                {(idPreviewError || idImageError) && !kycPreviewLoading && (
+                                  <p className="mt-2 text-[10px] text-amber-300/90 normal-case tracking-normal font-medium">
+                                    {idPreviewError || 'Image failed to load (private R2)'}
+                                  </p>
+                                )}
                               </div>
                             )}
 
-                            {selectedRequest.id_url && (
+                            {idPreviewUrl && (
                               <a
-                                href={selectedRequest.id_url}
+                                href={idPreviewUrl}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 font-bold text-xs"
@@ -784,15 +850,15 @@ export default function ModeratorPage() {
                               </a>
                             )}
 
-                            {selectedRequest.id_url && (
+                            {idPreviewUrl && (
                               <div className="absolute bottom-2 left-2 right-2">
                                 <a
-                                  href={selectedRequest.id_url}
+                                  href={idPreviewUrl}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="block text-[10px] text-blue-200 bg-black/40 rounded px-2 py-1 overflow-hidden whitespace-nowrap text-ellipsis"
                                 >
-                                  Open ID URL
+                                  Open ID preview
                                 </a>
                               </div>
                             )}
@@ -800,10 +866,9 @@ export default function ModeratorPage() {
 
                           {/* Selfie / face match */}
                           <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center text-white relative group overflow-hidden">
-                            {!faceImageError && selectedRequest.face_url ? (
+                            {!faceImageError && facePreviewUrl ? (
                               <img
-                                src={selectedRequest.face_url}
-                                crossOrigin="anonymous"
+                                src={facePreviewUrl}
                                 referrerPolicy="no-referrer"
                                 className="w-full h-full object-contain"
                                 alt="Selfie / Face"
@@ -811,16 +876,25 @@ export default function ModeratorPage() {
                               />
                             ) : (
                               <div className="text-center px-4">
-                                <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
+                                {kycPreviewLoading ? (
+                                  <Loader2 size={28} className="mx-auto mb-2 opacity-40 animate-spin" />
+                                ) : (
+                                  <ShieldCheck size={32} className="mx-auto mb-2 opacity-20" />
+                                )}
                                 <p className="text-[10px] opacity-50 uppercase tracking-widest font-bold">
                                   Selfie / Face
                                 </p>
+                                {(facePreviewError || faceImageError) && !kycPreviewLoading && (
+                                  <p className="mt-2 text-[10px] text-amber-300/90 normal-case tracking-normal font-medium">
+                                    {facePreviewError || 'Image failed to load (private R2)'}
+                                  </p>
+                                )}
                               </div>
                             )}
 
-                            {selectedRequest.face_url && (
+                            {facePreviewUrl && (
                               <a
-                                href={selectedRequest.face_url}
+                                href={facePreviewUrl}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 font-bold text-xs"
@@ -829,15 +903,15 @@ export default function ModeratorPage() {
                               </a>
                             )}
 
-                            {selectedRequest.face_url && (
+                            {facePreviewUrl && (
                               <div className="absolute bottom-2 left-2 right-2">
                                 <a
-                                  href={selectedRequest.face_url}
+                                  href={facePreviewUrl}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="block text-[10px] text-blue-200 bg-black/40 rounded px-2 py-1 overflow-hidden whitespace-nowrap text-ellipsis"
                                 >
-                                  Open Selfie URL
+                                  Open selfie preview
                                 </a>
                               </div>
                             )}
@@ -1104,10 +1178,9 @@ export default function ModeratorPage() {
                     </div>
                     <div className="p-6 space-y-6">
                       <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center text-white relative group overflow-hidden">
-                        {!certImageError && selectedBusinessRequest.certificate_url ? (
+                        {!certImageError && certPreviewUrl ? (
                           <img
-                            src={selectedBusinessRequest.certificate_url}
-                            crossOrigin="anonymous"
+                            src={certPreviewUrl}
                             referrerPolicy="no-referrer"
                             className="w-full h-full object-contain"
                             alt="CAC Certificate"
@@ -1115,15 +1188,24 @@ export default function ModeratorPage() {
                           />
                         ) : (
                           <div className="text-center px-4">
-                            <FileWarning size={32} className="mx-auto mb-2 opacity-20" />
+                            {certPreviewLoading ? (
+                              <Loader2 size={28} className="mx-auto mb-2 opacity-40 animate-spin" />
+                            ) : (
+                              <FileWarning size={32} className="mx-auto mb-2 opacity-20" />
+                            )}
                             <p className="text-[10px] opacity-50 uppercase tracking-widest font-bold">
                               CAC Certificate
                             </p>
+                            {(certPreviewError || certImageError) && !certPreviewLoading && (
+                              <p className="mt-2 text-[10px] text-amber-300/90 normal-case tracking-normal font-medium">
+                                {certPreviewError || 'Image failed to load (private R2)'}
+                              </p>
+                            )}
                           </div>
                         )}
-                        {selectedBusinessRequest.certificate_url && (
+                        {certPreviewUrl && (
                           <a
-                            href={selectedBusinessRequest.certificate_url}
+                            href={certPreviewUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 font-bold text-xs"
