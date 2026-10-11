@@ -32,9 +32,11 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
   const [list, setList] = useState<ProductRow[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(0)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const loadList = useCallback(async () => {
     setLoading(true)
+    setErrorMsg(null)
     const pCountry = countryCode === ALL_COUNTRIES_CODE ? null : countryCode
     const offset = page * PAGE_SIZE
     const { data, error } = await supabase.rpc('get_admin_products', {
@@ -46,6 +48,7 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
       setList(data as ProductRow[])
     } else {
       setList([])
+      setErrorMsg(error?.message || 'Failed to load products.')
     }
     setLoading(false)
   }, [countryCode, page, supabase])
@@ -66,7 +69,13 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
           <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--primary)' }} />
         </div>
       ) : list.length === 0 ? (
-        <EmptyState icon={ShoppingBag} message="No products match the country filter." />
+        <EmptyState
+          icon={ShoppingBag}
+          message={
+            errorMsg ||
+            'No products match the country filter. If this looks wrong, apply migration 20261120800000 (country name↔code match).'
+          }
+        />
       ) : (
         <>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

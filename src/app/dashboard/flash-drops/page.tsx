@@ -36,12 +36,19 @@ function formatEndsIn(minutes: number) {
   return `${Math.floor(minutes / 1440)}d left`
 }
 
-function listingUrl(row: FlashDropRow) {
+function publicListingUrl(row: FlashDropRow) {
   const slug = row.slug || row.listing_id
   if (row.listing_type === 'service') {
     return `https://storelink.ng/service/${encodeURIComponent(slug)}`
   }
   return `https://storelink.ng/p/${encodeURIComponent(slug)}`
+}
+
+function adminListingUrl(row: FlashDropRow) {
+  if (row.listing_type === 'service') {
+    return `/dashboard/service-listings/${row.listing_id}`
+  }
+  return `/dashboard/products/${row.listing_id}`
 }
 
 export default function FlashDropsPage() {
@@ -183,28 +190,19 @@ export default function FlashDropsPage() {
                         </span>
                         <p className="font-semibold text-gray-900 line-clamp-2">{row.title}</p>
                         <a
-                          href={listingUrl(row)}
+                          href={publicListingUrl(row)}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 text-blue-600 hover:underline"
                         >
-                          Open listing
+                          Open public listing
                         </a>
-                        {row.listing_type === 'product' ? (
-                          <Link
-                            href={`/dashboard/products/${row.listing_id}`}
-                            className="block text-[10px] text-gray-500 hover:text-blue-600 hover:underline"
-                          >
-                            Admin product detail
-                          </Link>
-                        ) : (
-                          <Link
-                            href={`/dashboard/service-listings?q=${row.listing_id}`}
-                            className="block text-[10px] text-gray-500 hover:text-blue-600 hover:underline"
-                          >
-                            Service listings desk
-                          </Link>
-                        )}
+                        <Link
+                          href={adminListingUrl(row)}
+                          className="block text-[10px] text-gray-500 hover:text-blue-600 hover:underline"
+                        >
+                          Admin detail
+                        </Link>
                       </div>
                     </DataTableCell>
                     <DataTableCell>

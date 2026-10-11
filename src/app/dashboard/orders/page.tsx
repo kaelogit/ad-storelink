@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
@@ -11,13 +11,28 @@ import { parseApiError } from '../../../utils/http'
 import { DisputeChatTranscriptPanel } from '../../../components/admin/DisputeChatTranscriptPanel'
 import { ChatCommerceLinksPanel } from '../../../components/admin/ChatCommerceLinksPanel'
 import { isActiveProductOrderDispute } from '../../../utils/disputeChat'
+import { useCountryFilter } from '../../../contexts/CountryFilterContext'
+import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
 import { 
   Search, Package, Truck, CheckCircle, XCircle, AlertTriangle, 
   MapPin, User, Loader2, RefreshCcw
 } from 'lucide-react'
 
+type OrderListRow = {
+  id: string
+  status: string
+  total_amount: number
+  currency_code: string
+  payment_reference: string | null
+  buyer_display_name: string
+  seller_display_name: string
+  item_count: number
+  created_at: string
+}
+
 export default function OrderOps() {
   const supabase = createClient()
+  const { countryCode } = useCountryFilter()
   const [query, setQuery] = useState('')
   const [order, setOrder] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -26,6 +41,11 @@ export default function OrderOps() {
   const [markPaidRef, setMarkPaidRef] = useState('')
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
+  const [activeTab, setActiveTab] = useState<'list' | 'lookup'>('list')
+  const [list, setList] = useState<OrderListRow[]>([])
+  const [listLoading, setListLoading] = useState(false)
+  const [listStatus, setListStatus] = useState<string>('all')
+  const [listQuery, setListQuery] = useState('')
 
   const enrichOrderWithCoinOps = async (orderPayload: any) => {
     if (!orderPayload?.id) return orderPayload
@@ -53,22 +73,55 @@ export default function OrderOps() {
     }
   }
 
-  const searchOrder = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!query) return
-    
+  const openOrderByQuery = async (raw: string) => {
+    const q = raw.trim()
+    if (!q) return
     setLoading(true)
     setOrder(null)
-    const { data, error } = await supabase.rpc('get_order_details', { p_query: query.trim() })
-
+    setActiveTab('lookup')
+    setQuery(q)
+    const { data } = await supabase.rpc('get_order_details', { p_query: q })
     if (data) {
       const enriched = await enrichOrderWithCoinOps(data)
       setOrder(enriched)
+    } else {
+      setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
     }
-    else if (!data) setFeedback({ tone: 'error', message: 'Order not found. Check UUID or reference.' })
-    
     setLoading(false)
   }
+
+  const searchOrder = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await openOrderByQuery(query)
+  }
+
+  const loadList = useCallback(async () => {
+    setListLoading(true)
+    const { data, error } = await supabase.rpc('get_admin_orders', {
+      p_country_code: countryCode === ALL_COUNTRIES_CODE ? null : countryCode,
+      p_status: listStatus === 'all' ? null : listStatus,
+      p_limit: 100,
+      p_offset: 0,
+    })
+    if (!error && Array.isArray(data)) {
+      setList(data as OrderListRow[])
+    } else {
+      setList([])
+      if (error) {
+        setFeedback({
+          tone: 'error',
+          message:
+            error.message ||
+            'Failed to load orders. Apply migration 20261120800000 if get_admin_orders is missing.',
+        })
+      }
+    }
+    setListLoading(false)
+  }, [countryCode, listStatus, supabase])
+
+  useEffect(() => {
+    if (activeTab === 'list') void loadList()
+  }, [activeTab, loadList])
 
   const markOrderPaidByReference = async () => {
     const ref = markPaidRef?.trim()
@@ -154,7 +207,7 @@ export default function OrderOps() {
       {/* Header & Search */}
       <PageHeader
         title="Transaction Ops"
-        subtitle="Look up orders by UUID or Paystack ref. For stuck AWAITING_PAYMENT queues, use Payment incidents."
+        subtitle="Browse every product order, click for full detail, or look up by UUID / Paystack ref. Stuck AWAITING_PAYMENT → Payment incidents."
         actions={
           <DeskLinkPills
             links={[
@@ -167,6 +220,130 @@ export default function OrderOps() {
         }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+
+      <div className="flex gap-2 border-b border-gray-200">
+        <button
+          type="button"
+          onClick={() => setActiveTab('list')}
+          className={`px-4 py-2 text-sm font-bold ${activeTab === 'list' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+        >
+          Recent orders
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('lookup')}
+          className={`px-4 py-2 text-sm font-bold ${activeTab === 'lookup' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+        >
+          Lookup
+        </button>
+      </div>
+
+      {activeTab === 'list' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void loadList()}
+              disabled={listLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+            >
+              {listLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+              Refresh
+            </button>
+            <select
+              value={listStatus}
+              onChange={(e) => setListStatus(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700"
+            >
+              <option value="all">All statuses</option>
+              <option value="AWAITING_PAYMENT">AWAITING_PAYMENT</option>
+              <option value="PAID">PAID</option>
+              <option value="SHIPPED">SHIPPED</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="CANCELLED">CANCELLED</option>
+              <option value="DISPUTED">DISPUTED</option>
+            </select>
+            <input
+              type="text"
+              value={listQuery}
+              onChange={(e) => setListQuery(e.target.value)}
+              placeholder="Filter buyer, seller, ref, id…"
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs w-56 outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          {listLoading && list.length === 0 ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-7 w-7 animate-spin text-blue-600" />
+            </div>
+          ) : list.filter((row) => {
+              const q = listQuery.trim().toLowerCase()
+              if (!q) return true
+              return (
+                row.id.toLowerCase().includes(q) ||
+                (row.payment_reference || '').toLowerCase().includes(q) ||
+                (row.buyer_display_name || '').toLowerCase().includes(q) ||
+                (row.seller_display_name || '').toLowerCase().includes(q) ||
+                (row.status || '').toLowerCase().includes(q)
+              )
+            }).length === 0 ? (
+            <EmptyState icon={Package} message="No product orders for this filter yet." />
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="text-left p-3 font-bold text-gray-600">ID</th>
+                    <th className="text-left p-3 font-bold text-gray-600">Status</th>
+                    <th className="text-left p-3 font-bold text-gray-600">Amount</th>
+                    <th className="text-left p-3 font-bold text-gray-600">Buyer</th>
+                    <th className="text-left p-3 font-bold text-gray-600">Seller</th>
+                    <th className="text-left p-3 font-bold text-gray-600">Paystack ref</th>
+                    <th className="text-left p-3 font-bold text-gray-600">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list
+                    .filter((row) => {
+                      const q = listQuery.trim().toLowerCase()
+                      if (!q) return true
+                      return (
+                        row.id.toLowerCase().includes(q) ||
+                        (row.payment_reference || '').toLowerCase().includes(q) ||
+                        (row.buyer_display_name || '').toLowerCase().includes(q) ||
+                        (row.seller_display_name || '').toLowerCase().includes(q) ||
+                        (row.status || '').toLowerCase().includes(q)
+                      )
+                    })
+                    .map((row) => (
+                      <tr
+                        key={row.id}
+                        className="border-b border-gray-100 hover:bg-blue-50/70 cursor-pointer"
+                        onClick={() => void openOrderByQuery(row.id)}
+                      >
+                        <td className="p-3 font-mono text-xs">{row.id.slice(0, 8)}…</td>
+                        <td className={`p-3 font-bold ${getStatusColor(row.status)}`}>{row.status}</td>
+                        <td className="p-3 font-mono">
+                          {row.currency_code} {Number(row.total_amount || 0).toLocaleString()}
+                        </td>
+                        <td className="p-3">{row.buyer_display_name}</td>
+                        <td className="p-3">{row.seller_display_name}</td>
+                        <td className="p-3 font-mono text-xs text-gray-500">
+                          {row.payment_reference || '—'}
+                        </td>
+                        <td className="p-3 text-gray-500">
+                          {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'lookup' && (
+      <>
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <form onSubmit={searchOrder} className="flex gap-2 w-full md:w-96">
             <div className="relative flex-1">
@@ -383,6 +560,8 @@ export default function OrderOps() {
         </div>
       ) : (
         <EmptyState icon={Search} message="Enter an Order ID or Reference to begin diagnostics." />
+      )}
+      </>
       )}
       <ActionReasonModal
         open={pendingStatus !== null}

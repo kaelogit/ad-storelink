@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
@@ -155,7 +155,7 @@ export default function BookingsPage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [pendingStatus, setPendingStatus] = useState<'completed' | 'cancelled' | 'refunded' | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
-  const [activeTab, setActiveTab] = useState<'lookup' | 'list'>('lookup')
+  const [activeTab, setActiveTab] = useState<'lookup' | 'list'>('list')
   const [listFilter, setListFilter] = useState<'all' | 'disputes'>('all')
   const [listStatusFilter, setListStatusFilter] = useState<
     'all' | 'requested' | 'confirmed' | 'paid' | 'in_progress' | 'completed' | 'cancelled' | 'disputed' | 'refunded'
@@ -212,9 +212,15 @@ export default function BookingsPage() {
       setList(data as BookingListRow[])
     } else {
       setList([])
+      if (error) setFeedback({ tone: 'error', message: error.message || 'Failed to load bookings.' })
     }
     setListLoading(false)
   }
+
+  useEffect(() => {
+    if (activeTab === 'list') void loadList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when country/status filters change
+  }, [activeTab, countryCode, listStatusFilter])
 
   const forceStatus = async ({
     status,
@@ -357,7 +363,7 @@ export default function BookingsPage() {
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
         title="Bookings"
-        subtitle="Look up bookings by booking UUID or linked payment order UUID. Force complete, cancel, or refund with audit reasons."
+        subtitle="Browse recent bookings, click a row for full detail, or look up by booking / payment order UUID."
         actions={
           <DeskLinkPills
             links={[
