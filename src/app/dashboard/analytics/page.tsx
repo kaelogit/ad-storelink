@@ -68,7 +68,7 @@ type WarehousePayload = {
 const DAY_OPTIONS = [7, 30, 90] as const
 
 export default function AnalyticsWarehousePage() {
-  const { countryCode } = useCountryFilter()
+  const { countryCode, isGlobalView } = useCountryFilter()
   const [payload, setPayload] = useState<WarehousePayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [days, setDays] = useState<number>(30)
@@ -113,6 +113,7 @@ export default function AnalyticsWarehousePage() {
       firstOrderBuyers: Number(row.metrics?.firstOrderBuyers ?? 0),
       cohortSignups: Number(row.metrics?.onboarding?.cohortSignups ?? 0),
       completedOnboarding: Number(row.metrics?.onboarding?.completedOnboarding ?? 0),
+      completionRate: Number(row.metrics?.onboarding?.completionRate ?? 0),
       stuckCount: Number(row.metrics?.onboarding?.stuckCount ?? 0),
     }))
   }, [payload?.series])
@@ -172,6 +173,16 @@ export default function AnalyticsWarehousePage() {
       />
 
       {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
+
+      {isGlobalView && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">
+          <p className="text-sm font-semibold">All countries selected — money totals can mix currencies</p>
+          <p className="mt-1 text-xs text-amber-700">
+            DAU, orders, and signups are fine to aggregate. GMV / product–service money charts may sum NGN + GHS + other
+            units. Pick a country for clean revenue reading.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {DAY_OPTIONS.map((d) => (
@@ -248,7 +259,7 @@ export default function AnalyticsWarehousePage() {
               label="Onboarding rate"
               value={formatPct(onboarding?.completionRate)}
               sparkData={chartData}
-              sparkKey="completedOnboarding"
+              sparkKey="completionRate"
               accent="rose"
             />
           </div>

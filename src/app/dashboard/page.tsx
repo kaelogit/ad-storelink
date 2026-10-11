@@ -96,13 +96,15 @@ export default function DashboardOverview() {
     async function init() {
         // 1. Get User & Role
         const { data: { user } } = await supabase.auth.getUser()
+        let resolvedRole: string | null = null
         if (user) {
             const { data: adminUser } = await supabase
                 .from('admin_users')
                 .select('role')
                 .eq('id', user.id)
                 .single()
-            setRole(adminUser?.role || null)
+            resolvedRole = adminUser?.role || null
+            setRole(resolvedRole)
         }
 
         // 2. Fetch Stats & Chart (filtered by country; null = all countries)
@@ -121,32 +123,38 @@ export default function DashboardOverview() {
           setChartData([])
         }
 
-        // 7d warehouse mini-series for Overview chart strip (analyst / super_admin)
-        setWarehouseLoading(true)
-        try {
-          const params = new URLSearchParams({
-            country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
-            days: '7',
-          })
-          const whRes = await fetch(`/api/admin/analytics/warehouse?${params.toString()}`)
-          if (whRes.ok) {
-            const wh = await whRes.json()
-            const series = Array.isArray(wh?.series) ? wh.series : []
-            setWarehouseSeries(
-              series.map((row: any) => ({
-                day: String(row.report_date || ''),
-                productGmv: Number(row.metrics?.productGmv ?? 0),
-                serviceGmv: Number(row.metrics?.serviceGmv ?? 0),
-                productOrders: Number(row.metrics?.productOrders ?? 0),
-                serviceOrders: Number(row.metrics?.serviceOrders ?? 0),
-              })),
-            )
-          } else {
+        // 7d warehouse mini-series (API is super_admin / analyst only)
+        const canFetchWarehouse = ['super_admin', 'analyst'].includes(resolvedRole || '')
+        if (canFetchWarehouse && !isGlobalView) {
+          setWarehouseLoading(true)
+          try {
+            const params = new URLSearchParams({
+              country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
+              days: '7',
+            })
+            const whRes = await fetch(`/api/admin/analytics/warehouse?${params.toString()}`)
+            if (whRes.ok) {
+              const wh = await whRes.json()
+              const series = Array.isArray(wh?.series) ? wh.series : []
+              setWarehouseSeries(
+                series.map((row: any) => ({
+                  day: String(row.report_date || ''),
+                  productGmv: Number(row.metrics?.productGmv ?? 0),
+                  serviceGmv: Number(row.metrics?.serviceGmv ?? 0),
+                  productOrders: Number(row.metrics?.productOrders ?? 0),
+                  serviceOrders: Number(row.metrics?.serviceOrders ?? 0),
+                })),
+              )
+            } else {
+              setWarehouseSeries([])
+            }
+          } catch {
             setWarehouseSeries([])
+          } finally {
+            setWarehouseLoading(false)
           }
-        } catch {
+        } else {
           setWarehouseSeries([])
-        } finally {
           setWarehouseLoading(false)
         }
 
@@ -206,7 +214,10 @@ export default function DashboardOverview() {
     day: row.date ?? row.day ?? '',
     revenue: Number(row.revenue ?? 0),
   }))
-  const showChartStrip = !isGlobalView && (canSeeMoney || canSeeAnalytics)
+  const showMoneyTrends = !isGlobalView && canSeeMoney
+  const showWarehouseTrends = !isGlobalView && canSeeAnalytics
+  const showOpsHealth = ['super_admin', 'finance', 'moderator', 'support', 'analyst'].includes(role || '')
+  const showTrendsSection = showMoneyTrends || showWarehouseTrends || showOpsHealth
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -372,13 +383,17 @@ export default function DashboardOverview() {
         </div>
       </div>
 
-      {/* 3. Chart intelligence strip + shortcuts */}
-      {showChartStrip && (
+      {/* 3. Chart intelligence strip */}
+      {showTrendsSection && (
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-bold text-gray-900">Trends</h3>
-              <p className="text-xs text-gray-500">Last 7 days — glanceable commerce and ops health</p>
+              <p className="text-xs text-gray-500">
+                {isGlobalView
+                  ? 'Ops queues are global; select a country for money and warehouse charts.'
+                  : 'Last 7 days — glanceable commerce and ops health'}
+              </p>
             </div>
             {canSeeAnalytics && (
               <Link
@@ -390,7 +405,7 @@ export default function DashboardOverview() {
             )}
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            {canSeeMoney && (
+            {showMoneyTrends && (
               <ChartCard
                 title="Profit realization"
                 subtitle="Realized commissions"
@@ -412,95 +427,93 @@ export default function DashboardOverview() {
               </ChartCard>
             )}
 
-            <ChartCard
-              title="GMV mix"
-              subtitle="Product vs service"
-              rangeLabel="7d"
-              accent="emerald"
-              loading={warehouseLoading}
-              empty={!warehouseLoading && warehouseSeries.length === 0}
-              emptyMessage={
-                canSeeAnalytics
-                  ? 'No warehouse snapshots yet.'
-                  : 'Warehouse charts require analyst access.'
-              }
-              height={220}
-            >
-              <StackedArea
-                data={warehouseSeries}
-                series={[
-                  { key: 'productGmv', name: 'Product', color: '#059669' },
-                  { key: 'serviceGmv', name: 'Service', color: '#0ea5e9' },
-                ]}
-                valueKind="money"
-              />
-            </ChartCard>
+            {showWarehouseTrends && (
+              <ChartCard
+                title="GMV mix"
+                subtitle="Product vs service"
+                rangeLabel="7d"
+                accent="emerald"
+                loading={warehouseLoading}
+                empty={!warehouseLoading && warehouseSeries.length === 0}
+                emptyMessage="No warehouse snapshots yet."
+                height={220}
+              >
+                <StackedArea
+                  data={warehouseSeries}
+                  series={[
+                    { key: 'productGmv', name: 'Product', color: '#059669' },
+                    { key: 'serviceGmv', name: 'Service', color: '#0ea5e9' },
+                  ]}
+                  valueKind="money"
+                />
+              </ChartCard>
+            )}
 
-            <ChartCard
-              title="Orders vs bookings"
-              subtitle="Daily demand"
-              rangeLabel="7d"
-              accent="orange"
-              loading={warehouseLoading}
-              empty={!warehouseLoading && warehouseSeries.length === 0}
-              emptyMessage={
-                canSeeAnalytics
-                  ? 'No warehouse snapshots yet.'
-                  : 'Warehouse charts require analyst access.'
-              }
-              height={220}
-            >
-              <GroupedBars
-                data={warehouseSeries}
-                series={[
-                  { key: 'productOrders', name: 'Orders', color: '#ea580c' },
-                  { key: 'serviceOrders', name: 'Bookings', color: '#d97706' },
-                ]}
-              />
-            </ChartCard>
+            {showWarehouseTrends && (
+              <ChartCard
+                title="Orders vs bookings"
+                subtitle="Daily demand"
+                rangeLabel="7d"
+                accent="orange"
+                loading={warehouseLoading}
+                empty={!warehouseLoading && warehouseSeries.length === 0}
+                emptyMessage="No warehouse snapshots yet."
+                height={220}
+              >
+                <GroupedBars
+                  data={warehouseSeries}
+                  series={[
+                    { key: 'productOrders', name: 'Orders', color: '#ea580c' },
+                    { key: 'serviceOrders', name: 'Bookings', color: '#d97706' },
+                  ]}
+                />
+              </ChartCard>
+            )}
 
-            <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm"
-              style={{ backgroundImage: 'linear-gradient(180deg, #ffedd533 0%, #ffffff 42%)' }}
-            >
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">Ops health</h3>
-                  <p className="mt-0.5 text-xs text-gray-500">Live queues needing attention</p>
+            {showOpsHealth && (
+              <div
+                className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm"
+                style={{ backgroundImage: 'linear-gradient(180deg, #ffedd533 0%, #ffffff 42%)' }}
+              >
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Ops health</h3>
+                    <p className="mt-0.5 text-xs text-gray-500">Live queues needing attention</p>
+                  </div>
+                  <span className="rounded-full border border-orange-100 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-800">
+                    Live
+                  </span>
                 </div>
-                <span className="rounded-full border border-orange-100 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-800">
-                  Live
-                </span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-red-100 bg-red-50/50 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-red-600">Disputes</p>
+                    <p className={`mt-2 text-3xl font-black ${stats.active_disputes > 0 ? 'text-red-700' : 'text-gray-400'}`}>
+                      {stats.active_disputes}
+                    </p>
+                    <Link href="/dashboard/finance" className="mt-2 inline-block text-[10px] font-bold text-red-700 hover:underline">
+                      Open tribunal →
+                    </Link>
+                  </div>
+                  <div className="rounded-lg border border-orange-100 bg-orange-50/50 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Pending KYC</p>
+                    <p className={`mt-2 text-3xl font-black ${stats.pending_kyc > 0 ? 'text-orange-700' : 'text-gray-400'}`}>
+                      {stats.pending_kyc}
+                    </p>
+                    <Link href="/dashboard/moderator" className="mt-2 inline-block text-[10px] font-bold text-orange-700 hover:underline">
+                      Open KYC →
+                    </Link>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-red-100 bg-red-50/50 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-red-600">Disputes</p>
-                  <p className={`mt-2 text-3xl font-black ${stats.active_disputes > 0 ? 'text-red-700' : 'text-gray-400'}`}>
-                    {stats.active_disputes}
-                  </p>
-                  <Link href="/dashboard/finance" className="mt-2 inline-block text-[10px] font-bold text-red-700 hover:underline">
-                    Open tribunal →
-                  </Link>
-                </div>
-                <div className="rounded-lg border border-orange-100 bg-orange-50/50 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Pending KYC</p>
-                  <p className={`mt-2 text-3xl font-black ${stats.pending_kyc > 0 ? 'text-orange-700' : 'text-gray-400'}`}>
-                    {stats.pending_kyc}
-                  </p>
-                  <Link href="/dashboard/moderator" className="mt-2 inline-block text-[10px] font-bold text-orange-700 hover:underline">
-                    Open KYC →
-                  </Link>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
 
-      <div className="grid gap-6 md:grid-cols-3">
-        {/* Quick Access */}
-        <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm md:col-span-3 lg:col-span-1">
+      {/* Shortcuts + quality gates */}
+      <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 mb-4">Shortcuts</h3>
-          <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {['super_admin', 'moderator', 'support'].includes(role || '') && (
               <QuickLink
                 href="/dashboard/moderator"
@@ -543,84 +556,84 @@ export default function DashboardOverview() {
             )}
           </div>
 
-          <div className="mt-6 rounded-lg bg-gray-50 p-4 border border-gray-200 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quality gates</h4>
-              {['super_admin', 'analyst'].includes(role || '') && (
-                <Link href="/dashboard/safety-tests" className="text-[10px] font-bold text-blue-600 hover:underline">
-                  Open QA Hub
-                </Link>
-              )}
-            </div>
-
-            {latestSmokeRun ? (
-              <div
-                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
-                  latestSmokeRun.status === 'passed'
-                    ? 'border-emerald-200 bg-emerald-50'
-                    : 'border-red-200 bg-red-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {latestSmokeRun.status === 'passed' ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-red-600" />
-                  )}
-                  <div>
-                    <p className="text-xs font-bold text-gray-900">
-                      CI safety tests: {latestSmokeRun.status === 'passed' ? 'PASS' : 'FAIL'}
-                    </p>
-                    <p className="text-[10px] text-gray-600">
-                      {latestSmokeRun.passed_tests}/{latestSmokeRun.total_tests} passed
-                      {latestSmokeRun.failed_tests > 0 ? ` · ${latestSmokeRun.failed_tests} failed` : ''}
-                    </p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-gray-500">
-                  {new Date(latestSmokeRun.created_at).toLocaleString()}
-                </span>
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-lg bg-gray-50 p-4 border border-gray-200 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quality gates</h4>
+                {['super_admin', 'analyst'].includes(role || '') && (
+                  <Link href="/dashboard/safety-tests" className="text-[10px] font-bold text-blue-600 hover:underline">
+                    Open QA Hub
+                  </Link>
+                )}
               </div>
-            ) : (
-              <p className="text-[11px] text-gray-500">No CI safety runs published yet.</p>
-            )}
 
-            <p className="text-[11px] text-gray-500">
-              Run staging smoke and volunteer E2E before risky deploys. Escrow health lives in QA Hub.
-            </p>
-
-            <div className="flex flex-wrap gap-2">
-              {QA_RUNBOOKS.slice(0, 3).map((runbook) => (
-                <Link
-                  key={runbook.id}
-                  href={`/dashboard/safety-tests#${runbook.id}`}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 transition"
+              {latestSmokeRun ? (
+                <div
+                  className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+                    latestSmokeRun.status === 'passed'
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-red-200 bg-red-50'
+                  }`}
                 >
-                  <PlayCircle className="h-3 w-3 text-green-600" />
-                  {runbook.title}
-                </Link>
-              ))}
-              <Link
-                href="/dashboard/safety-tests"
-                className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[10px] font-semibold text-blue-800 hover:bg-blue-100 transition"
-              >
-                Full QA Hub
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-            </div>
-          </div>
+                  <div className="flex items-center gap-2">
+                    {latestSmokeRun.status === 'passed' ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-600" />
+                    )}
+                    <div>
+                      <p className="text-xs font-bold text-gray-900">
+                        CI safety tests: {latestSmokeRun.status === 'passed' ? 'PASS' : 'FAIL'}
+                      </p>
+                      <p className="text-[10px] text-gray-600">
+                        {latestSmokeRun.passed_tests}/{latestSmokeRun.total_tests} passed
+                        {latestSmokeRun.failed_tests > 0 ? ` · ${latestSmokeRun.failed_tests} failed` : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-gray-500">
+                    {new Date(latestSmokeRun.created_at).toLocaleString()}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-500">No CI safety runs published yet.</p>
+              )}
 
-          <div className="mt-4 rounded-lg bg-gray-50 p-4 border border-gray-200">
-            <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Infrastructure</h4>
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">DB Latency</span>
-                <span className="font-mono font-bold text-gray-900">{dbLatency || '-'}ms</span>
+              <p className="text-[11px] text-gray-500">
+                Run staging smoke and volunteer E2E before risky deploys. Escrow health lives in QA Hub.
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                {QA_RUNBOOKS.slice(0, 3).map((runbook) => (
+                  <Link
+                    key={runbook.id}
+                    href={`/dashboard/safety-tests#${runbook.id}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 transition"
+                  >
+                    <PlayCircle className="h-3 w-3 text-green-600" />
+                    {runbook.title}
+                  </Link>
+                ))}
+                <Link
+                  href="/dashboard/safety-tests"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[10px] font-semibold text-blue-800 hover:bg-blue-100 transition"
+                >
+                  Full QA Hub
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-gray-50 p-4 border border-gray-200">
+              <h4 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Infrastructure</h4>
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-600">DB Latency</span>
+                  <span className="font-mono font-bold text-gray-900">{dbLatency || '-'}ms</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
       </div>
 
       {/* 4. Intervention Trends */}
