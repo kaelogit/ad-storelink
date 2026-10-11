@@ -8,6 +8,12 @@ import { PageHeader } from '../../../../components/admin/PageHeader'
 import { ActionFeedback } from '../../../../components/admin/ActionFeedback'
 import { EmptyState } from '../../../../components/admin/EmptyState'
 import {
+  ChartCard,
+  DualAxisLine,
+  KpiSparkCard,
+  formatCount,
+} from '../../../../components/admin/charts'
+import {
   DataTable,
   DataTableBody,
   DataTableCell,
@@ -18,6 +24,7 @@ import {
 import { parseApiError } from '../../../../utils/http'
 import { useCountryFilter } from '../../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../../constants/SupportedCountries'
+import { Eye, MousePointerClick, Wallet, Gauge } from 'lucide-react'
 
 type Metrics = {
   impressions?: number
@@ -105,6 +112,22 @@ export default function AdsReportingPage() {
   const series = useMemo(() => (Array.isArray(payload?.series) ? payload!.series! : []), [payload])
   const latest = payload?.latest
 
+  const chartData = useMemo(
+    () =>
+      series.map((row) => {
+        const m = row.metrics || {}
+        return {
+          day: row.report_date,
+          spend: Number(m.spentMinor || 0) / 100,
+          billable: Number(m.billableImpressions || 0),
+          ctr: Number(m.ctr ?? 0),
+          ecpm: Number(m.ecpm ?? 0) / 100,
+          clicks: Number(m.clicks || 0),
+        }
+      }),
+    [series],
+  )
+
   const exportHref = `/api/admin/ads/warehouse/export?country=${encodeURIComponent(
     countryParam,
   )}&days=${days}&placement=${encodeURIComponent(placement)}`
@@ -171,13 +194,43 @@ export default function AdsReportingPage() {
 
       {latest ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Kpi label="Billable views" value={Number(latest.billableImpressions || 0).toLocaleString()} />
-          <Kpi label="Spend" value={moneyMinor(latest.spentMinor)} />
-          <Kpi label="Clicks" value={Number(latest.clicks || 0).toLocaleString()} />
-          <Kpi
+          <KpiSparkCard
+            icon={Eye}
+            label="Billable views"
+            value={formatCount(latest.billableImpressions)}
+            sparkData={chartData}
+            sparkKey="billable"
+            accent="sky"
+          />
+          <KpiSparkCard
+            icon={Wallet}
+            label="Spend"
+            value={moneyMinor(latest.spentMinor)}
+            sparkData={chartData}
+            sparkKey="spend"
+            accent="emerald"
+          />
+          <KpiSparkCard
+            icon={MousePointerClick}
+            label="Clicks"
+            value={formatCount(latest.clicks)}
+            sparkData={chartData}
+            sparkKey="clicks"
+            accent="orange"
+          />
+          <KpiSparkCard
+            icon={Gauge}
             label="eCPM"
             value={latest.ecpm != null ? moneyMinor(Math.round(Number(latest.ecpm))) : '—'}
+            sparkData={chartData}
+            sparkKey="ecpm"
+            accent="amber"
           />
+        </div>
+      ) : null}
+
+      {latest ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi label="Package revenue" value={moneyMinor(latest.revenueMinor)} />
           <Kpi label="Cart adds" value={Number(latest.addToCarts || 0).toLocaleString()} />
           <Kpi label="Orders" value={Number(latest.purchases || 0).toLocaleString()} />
@@ -185,6 +238,61 @@ export default function AdsReportingPage() {
             label="Fill-ish"
             value={latest.fillIsh != null ? `${latest.fillIsh}%` : '—'}
           />
+        </div>
+      ) : null}
+
+      {chartData.length > 0 ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartCard
+            title="Spend & billable views"
+            subtitle="Daily ad delivery economics"
+            rangeLabel={`${days}d`}
+            accent="emerald"
+            height={280}
+          >
+            <DualAxisLine
+              data={chartData}
+              left={{
+                key: 'spend',
+                name: 'Spend',
+                color: '#059669',
+                yAxisId: 'left',
+                valueKind: 'money',
+              }}
+              right={{
+                key: 'billable',
+                name: 'Billable views',
+                color: '#0284c7',
+                yAxisId: 'right',
+                valueKind: 'count',
+              }}
+            />
+          </ChartCard>
+          <ChartCard
+            title="CTR & eCPM"
+            subtitle="Efficiency trends"
+            rangeLabel={`${days}d`}
+            accent="amber"
+            height={280}
+          >
+            <DualAxisLine
+              data={chartData}
+              left={{
+                key: 'ctr',
+                name: 'CTR %',
+                color: '#ea580c',
+                yAxisId: 'left',
+                valueKind: 'pct',
+              }}
+              right={{
+                key: 'ecpm',
+                name: 'eCPM',
+                color: '#d97706',
+                yAxisId: 'right',
+                valueKind: 'money',
+              }}
+            />
+          </ChartCard>
         </div>
       ) : null}
 

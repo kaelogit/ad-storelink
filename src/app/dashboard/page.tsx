@@ -28,12 +28,16 @@ import {
   Inbox,
   CalendarCheck,
 } from 'lucide-react'
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
-} from 'recharts'
 import { QA_RUNBOOKS } from '../../constants/qaRunbooks'
 import { DisasterRecoveryPanel } from '../../components/admin/DisasterRecoveryPanel'
 import { EscrowHealthPanel } from '../../components/admin/EscrowHealthPanel'
+import {
+  ChartCard,
+  GroupedBars,
+  StackedArea,
+  TrendArea,
+} from '../../components/admin/charts'
+import { ALL_COUNTRIES_CODE } from '../../constants/SupportedCountries'
 
 export default function DashboardOverview() {
   const supabase = createClient()
@@ -53,6 +57,16 @@ export default function DashboardOverview() {
     pending_kyc: 0
   })
   const [chartData, setChartData] = useState<any[]>([])
+  const [warehouseSeries, setWarehouseSeries] = useState<
+    Array<{
+      day: string
+      productGmv: number
+      serviceGmv: number
+      productOrders: number
+      serviceOrders: number
+    }>
+  >([])
+  const [warehouseLoading, setWarehouseLoading] = useState(false)
   const [interventionTrends, setInterventionTrends] = useState<
     { actionType: string; category: string; count: number }[]
   >([])
@@ -107,6 +121,35 @@ export default function DashboardOverview() {
           setChartData([])
         }
 
+        // 7d warehouse mini-series for Overview chart strip (analyst / super_admin)
+        setWarehouseLoading(true)
+        try {
+          const params = new URLSearchParams({
+            country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
+            days: '7',
+          })
+          const whRes = await fetch(`/api/admin/analytics/warehouse?${params.toString()}`)
+          if (whRes.ok) {
+            const wh = await whRes.json()
+            const series = Array.isArray(wh?.series) ? wh.series : []
+            setWarehouseSeries(
+              series.map((row: any) => ({
+                day: String(row.report_date || ''),
+                productGmv: Number(row.metrics?.productGmv ?? 0),
+                serviceGmv: Number(row.metrics?.serviceGmv ?? 0),
+                productOrders: Number(row.metrics?.productOrders ?? 0),
+                serviceOrders: Number(row.metrics?.serviceOrders ?? 0),
+              })),
+            )
+          } else {
+            setWarehouseSeries([])
+          }
+        } catch {
+          setWarehouseSeries([])
+        } finally {
+          setWarehouseLoading(false)
+        }
+
         const since = getSinceISOString(trendWindow)
         const { data: auditData } = await supabase
           .from('admin_audit_logs')
@@ -158,6 +201,12 @@ export default function DashboardOverview() {
 
   const isBoss = role === 'super_admin'
   const canSeeMoney = ['super_admin', 'finance'].includes(role || '')
+  const canSeeAnalytics = ['super_admin', 'analyst'].includes(role || '')
+  const profitChartData = (chartData.length > 0 ? chartData : []).map((row: any) => ({
+    day: row.date ?? row.day ?? '',
+    revenue: Number(row.revenue ?? 0),
+  }))
+  const showChartStrip = !isGlobalView && (canSeeMoney || canSeeAnalytics)
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -323,42 +372,133 @@ export default function DashboardOverview() {
         </div>
       </div>
 
-      {/* 3. The Visual Data & Access */}
-      <div className="grid gap-6 md:grid-cols-3">
-        
-        {/* Trend Chart - hidden when All Countries (mixed-currency) */}
-        {canSeeMoney && !isGlobalView && (
-            <div className="md:col-span-2 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-                <div className="mb-6 flex items-center justify-between">
-                    <div>
-                        <h3 className="text-lg font-bold text-gray-900">Profit Realization</h3>
-                        <p className="text-xs text-gray-500">Realized 2% Commissions (Last 7 Days)</p>
-                    </div>
-                    {chartData.length === 0 && <span className="text-[10px] bg-gray-100 px-2 py-1 rounded text-gray-500">Awaiting Data</span>}
-                </div>
-                
-                <div className="h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData.length > 0 ? chartData : [{date: 'Today', revenue: 0}]}>
-                        <defs>
-                            <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
-                                <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                        <XAxis dataKey="date" stroke="#888888" fontSize={10} tickLine={false} axisLine={false} />
-                        <YAxis stroke="#888888" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `₦${value}`} />
-                        <Tooltip />
-                        <Area type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" />
-                    </AreaChart>
-                    </ResponsiveContainer>
-                </div>
+      {/* 3. Chart intelligence strip + shortcuts */}
+      {showChartStrip && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Trends</h3>
+              <p className="text-xs text-gray-500">Last 7 days — glanceable commerce and ops health</p>
             </div>
-        )}
+            {canSeeAnalytics && (
+              <Link
+                href="/dashboard/analytics"
+                className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:underline"
+              >
+                Open full Analytics <ArrowRight size={12} />
+              </Link>
+            )}
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {canSeeMoney && (
+              <ChartCard
+                title="Profit realization"
+                subtitle="Realized commissions"
+                rangeLabel="7d"
+                accent="sky"
+                empty={profitChartData.length === 0}
+                emptyMessage="Awaiting commission data for this country."
+                height={220}
+              >
+                <TrendArea
+                  data={profitChartData}
+                  xKey="day"
+                  yKey="revenue"
+                  name="Commission"
+                  accent="sky"
+                  valueKind="money"
+                  gradientId="overview-profit"
+                />
+              </ChartCard>
+            )}
 
+            <ChartCard
+              title="GMV mix"
+              subtitle="Product vs service"
+              rangeLabel="7d"
+              accent="emerald"
+              loading={warehouseLoading}
+              empty={!warehouseLoading && warehouseSeries.length === 0}
+              emptyMessage={
+                canSeeAnalytics
+                  ? 'No warehouse snapshots yet.'
+                  : 'Warehouse charts require analyst access.'
+              }
+              height={220}
+            >
+              <StackedArea
+                data={warehouseSeries}
+                series={[
+                  { key: 'productGmv', name: 'Product', color: '#059669' },
+                  { key: 'serviceGmv', name: 'Service', color: '#0ea5e9' },
+                ]}
+                valueKind="money"
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Orders vs bookings"
+              subtitle="Daily demand"
+              rangeLabel="7d"
+              accent="orange"
+              loading={warehouseLoading}
+              empty={!warehouseLoading && warehouseSeries.length === 0}
+              emptyMessage={
+                canSeeAnalytics
+                  ? 'No warehouse snapshots yet.'
+                  : 'Warehouse charts require analyst access.'
+              }
+              height={220}
+            >
+              <GroupedBars
+                data={warehouseSeries}
+                series={[
+                  { key: 'productOrders', name: 'Orders', color: '#ea580c' },
+                  { key: 'serviceOrders', name: 'Bookings', color: '#d97706' },
+                ]}
+              />
+            </ChartCard>
+
+            <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm"
+              style={{ backgroundImage: 'linear-gradient(180deg, #ffedd533 0%, #ffffff 42%)' }}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">Ops health</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">Live queues needing attention</p>
+                </div>
+                <span className="rounded-full border border-orange-100 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-800">
+                  Live
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-red-100 bg-red-50/50 p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-red-600">Disputes</p>
+                  <p className={`mt-2 text-3xl font-black ${stats.active_disputes > 0 ? 'text-red-700' : 'text-gray-400'}`}>
+                    {stats.active_disputes}
+                  </p>
+                  <Link href="/dashboard/finance" className="mt-2 inline-block text-[10px] font-bold text-red-700 hover:underline">
+                    Open tribunal →
+                  </Link>
+                </div>
+                <div className="rounded-lg border border-orange-100 bg-orange-50/50 p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Pending KYC</p>
+                  <p className={`mt-2 text-3xl font-black ${stats.pending_kyc > 0 ? 'text-orange-700' : 'text-gray-400'}`}>
+                    {stats.pending_kyc}
+                  </p>
+                  <Link href="/dashboard/moderator" className="mt-2 inline-block text-[10px] font-bold text-orange-700 hover:underline">
+                    Open KYC →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-6 md:grid-cols-3">
         {/* Quick Access */}
-        <div className={`rounded-xl border border-gray-100 bg-white p-6 shadow-sm ${!canSeeMoney ? 'md:col-span-3' : ''}`}>
+        <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm md:col-span-3 lg:col-span-1">
           <h3 className="text-lg font-bold text-gray-900 mb-4">Shortcuts</h3>
           <div className="space-y-3">
             {['super_admin', 'moderator', 'support'].includes(role || '') && (
