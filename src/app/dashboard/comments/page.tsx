@@ -1,9 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Eye, Loader2, RefreshCcw, ShieldAlert } from 'lucide-react'
 
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
@@ -30,6 +32,20 @@ type CommentReportRow = {
   context_slug: string | null
 }
 
+type StatusCounts = {
+  total: number
+  open: number
+  reviewing: number
+  resolved: number
+  dismissed: number
+  by_source?: {
+    product?: number
+    service?: number
+    spotlight?: number
+    reel?: number
+  }
+}
+
 const REASON_CATEGORIES = [
   { value: 'policy_violation', label: 'Policy violation' },
   { value: 'abuse', label: 'Abusive/unsafe content' },
@@ -45,6 +61,9 @@ const SOURCE_LABELS: Record<CommentReportRow['source_type'], string> = {
   spotlight: 'Spotlight',
   reel: 'Reel',
 }
+
+const STATUS_TABS = ['open', 'reviewing', 'resolved', 'dismissed', 'all'] as const
+const SOURCE_TABS = ['all', 'product', 'service', 'spotlight', 'reel'] as const
 
 function contextUrl(row: CommentReportRow) {
   const slug = row.context_slug || row.context_id
@@ -64,10 +83,11 @@ function contextUrl(row: CommentReportRow) {
 
 export default function CommentsModerationPage() {
   const [rows, setRows] = useState<CommentReportRow[]>([])
+  const [counts, setCounts] = useState<StatusCounts | null>(null)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [statusTab, setStatusTab] = useState<'open' | 'reviewing' | 'resolved' | 'dismissed' | 'all'>('open')
-  const [sourceTab, setSourceTab] = useState<'all' | CommentReportRow['source_type']>('all')
+  const [statusTab, setStatusTab] = useState<(typeof STATUS_TABS)[number]>('all')
+  const [sourceTab, setSourceTab] = useState<(typeof SOURCE_TABS)[number]>('all')
   const [applyStrike, setApplyStrike] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [activeAction, setActiveAction] = useState<{
@@ -88,10 +108,15 @@ export default function CommentsModerationPage() {
       const msg = await parseApiError(response, 'Failed to load comment reports.')
       setFeedback({ tone: 'error', message: msg })
       setRows([])
+      setCounts(null)
       setLoading(false)
       return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: CommentReportRow[] }
+    const payload = (await response.json().catch(() => ({}))) as {
+      rows?: CommentReportRow[]
+      counts?: StatusCounts
+    }
+    setCounts(payload.counts ?? null)
     setRows(Array.isArray(payload.rows) ? payload.rows : [])
     setLoading(false)
   }, [sourceTab, statusTab])
@@ -136,9 +161,21 @@ export default function CommentsModerationPage() {
   }
 
   const tabClass = (active: boolean) =>
-    `rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+    `rounded-lg border px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 ${
       active ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
     }`
+
+  const countForStatus = (tab: (typeof STATUS_TABS)[number]) => {
+    if (!counts) return null
+    if (tab === 'all') return counts.total
+    return counts[tab]
+  }
+
+  const countForSource = (tab: (typeof SOURCE_TABS)[number]) => {
+    if (!counts) return null
+    if (tab === 'all') return counts.total
+    return counts.by_source?.[tab] ?? 0
+  }
 
   const actionTitle = () => {
     switch (activeAction?.action) {
@@ -162,20 +199,49 @@ export default function CommentsModerationPage() {
       <PageHeader
         title="Comments Moderation"
         subtitle="Unified queue for product, service, spotlight, and reel comment reports."
+        actions={
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/content-reports', label: 'Report Inbox' },
+              { href: '/dashboard/spotlight', label: 'Spotlight' },
+              { href: '/dashboard/reels', label: 'Reels' },
+            ]}
+          />
+        }
       />
 
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
+      {counts && counts.total === 0 ? (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          Desk is live — <span className="font-bold">0</span> comment reports filed yet. Reports appear here when a user
+          reports a comment in the app (product / service / spotlight / reel).
+        </div>
+      ) : null}
+
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
-            <button className={tabClass(statusTab === 'open')} onClick={() => setStatusTab('open')}>Open</button>
-            <button className={tabClass(statusTab === 'reviewing')} onClick={() => setStatusTab('reviewing')}>Reviewing</button>
-            <button className={tabClass(statusTab === 'resolved')} onClick={() => setStatusTab('resolved')}>Resolved</button>
-            <button className={tabClass(statusTab === 'dismissed')} onClick={() => setStatusTab('dismissed')}>Dismissed</button>
-            <button className={tabClass(statusTab === 'all')} onClick={() => setStatusTab('all')}>All</button>
+            {STATUS_TABS.map((tab) => {
+              const n = countForStatus(tab)
+              return (
+                <button key={tab} type="button" className={tabClass(statusTab === tab)} onClick={() => setStatusTab(tab)}>
+                  <span className="capitalize">{tab}</span>
+                  {n != null ? (
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${
+                        statusTab === tab ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {n}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
           </div>
           <button
+            type="button"
             onClick={() => void loadReports()}
             className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
           >
@@ -184,11 +250,28 @@ export default function CommentsModerationPage() {
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          {(['all', 'product', 'service', 'spotlight', 'reel'] as const).map((source) => (
-            <button key={source} className={tabClass(sourceTab === source)} onClick={() => setSourceTab(source)}>
-              {source === 'all' ? 'All sources' : SOURCE_LABELS[source]}
-            </button>
-          ))}
+          {SOURCE_TABS.map((source) => {
+            const n = countForSource(source)
+            return (
+              <button
+                key={source}
+                type="button"
+                className={tabClass(sourceTab === source)}
+                onClick={() => setSourceTab(source)}
+              >
+                {source === 'all' ? 'All sources' : SOURCE_LABELS[source]}
+                {n != null ? (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${
+                      sourceTab === source ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {n}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -199,7 +282,15 @@ export default function CommentsModerationPage() {
             Loading comment reports...
           </div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No comment reports" message="No reports match this filter right now." icon={ShieldAlert} />
+          <EmptyState
+            title="No comment reports"
+            message={
+              counts && counts.total === 0
+                ? 'Nobody has reported a comment yet. The queue is empty, not broken.'
+                : `Nothing in “${statusTab}”${sourceTab !== 'all' ? ` / ${sourceTab}` : ''}. Try All.`
+            }
+            icon={ShieldAlert}
+          />
         ) : (
           <DataTable>
             <DataTableHeader>
@@ -217,14 +308,36 @@ export default function CommentsModerationPage() {
                   <DataTableCell>
                     <div className="text-xs text-gray-700">
                       <p className="font-bold uppercase">{row.report_reason}</p>
-                      <p className="text-gray-500">@{row.reporter_slug || 'user'}</p>
+                      <p className="text-gray-500">
+                        {row.reporter_id ? (
+                          <Link href={`/dashboard/users?q=${encodeURIComponent(row.reporter_id)}`} className="hover:underline">
+                            @{row.reporter_slug || 'user'}
+                          </Link>
+                        ) : (
+                          <>@{row.reporter_slug || 'user'}</>
+                        )}
+                      </p>
                       <p className="text-[11px] text-gray-400">{new Date(row.report_created_at).toLocaleString()}</p>
+                      {row.report_details ? (
+                        <p className="mt-1 text-[11px] text-gray-500 line-clamp-2">{row.report_details}</p>
+                      ) : null}
                     </div>
                   </DataTableCell>
                   <DataTableCell>
                     <div className="space-y-1 text-xs">
                       <p className="line-clamp-2 text-gray-700">{row.comment_content}</p>
-                      <p className="text-gray-500">@{row.comment_author_slug || 'author'}</p>
+                      <p className="text-gray-500">
+                        {row.comment_author_id ? (
+                          <Link
+                            href={`/dashboard/users?q=${encodeURIComponent(row.comment_author_id)}`}
+                            className="hover:underline"
+                          >
+                            @{row.comment_author_slug || 'author'}
+                          </Link>
+                        ) : (
+                          <>@{row.comment_author_slug || 'author'}</>
+                        )}
+                      </p>
                     </div>
                   </DataTableCell>
                   <DataTableCell>
@@ -253,25 +366,41 @@ export default function CommentsModerationPage() {
                   <DataTableCell>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        onClick={() => { setApplyStrike(false); setActiveAction({ row, action: 'dismiss' }) }}
+                        type="button"
+                        onClick={() => {
+                          setApplyStrike(false)
+                          setActiveAction({ row, action: 'dismiss' })
+                        }}
                         className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-100"
                       >
                         Dismiss
                       </button>
                       <button
-                        onClick={() => { setApplyStrike(false); setActiveAction({ row, action: 'hide' }) }}
+                        type="button"
+                        onClick={() => {
+                          setApplyStrike(false)
+                          setActiveAction({ row, action: 'hide' })
+                        }}
                         className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
                       >
                         Hide
                       </button>
                       <button
-                        onClick={() => { setApplyStrike(false); setActiveAction({ row, action: 'delete' }) }}
+                        type="button"
+                        onClick={() => {
+                          setApplyStrike(false)
+                          setActiveAction({ row, action: 'delete' })
+                        }}
                         className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
                       >
                         Delete
                       </button>
                       <button
-                        onClick={() => { setApplyStrike(false); setActiveAction({ row, action: 'reinstate' }) }}
+                        type="button"
+                        onClick={() => {
+                          setApplyStrike(false)
+                          setActiveAction({ row, action: 'reinstate' })
+                        }}
                         className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
                       >
                         Reinstate
