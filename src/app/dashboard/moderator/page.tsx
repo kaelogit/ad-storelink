@@ -439,10 +439,19 @@ export default function ModeratorPage() {
     })
   }
 
+  const closeVerificationModal = () => {
+    setPendingVerification(null)
+    setIsProcessing(false)
+  }
+
   const executeVerification = async () => {
-    if (!pendingVerification) return
+    if (!pendingVerification) {
+      throw new Error('No verification selected.')
+    }
     const { requestId, profileId, status, kind } = pendingVerification
-    if (status !== 'verified') return
+    if (status !== 'verified') {
+      throw new Error('This confirm is for verify only.')
+    }
     setIsProcessing(true)
     setFeedback({ tone: 'info', message: 'Processing moderation decision...' })
 
@@ -451,39 +460,53 @@ export default function ModeratorPage() {
         ? '/api/admin/moderation/business-verification'
         : '/api/admin/moderation/verification'
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId,
-        profileId,
-        decision: status,
-      }),
-    })
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          profileId,
+          decision: status,
+        }),
+      })
 
-    if (!response.ok) {
-      const errorMessage = await parseApiError(response, 'Failed to process verification decision.')
-      setFeedback({ tone: 'error', message: errorMessage })
+      if (!response.ok) {
+        const errorMessage = await parseApiError(response, 'Failed to process verification decision.')
+        setFeedback({ tone: 'error', message: errorMessage })
+        throw new Error(errorMessage)
+      }
+
+      setSelectedRequest(null)
+      setSelectedBusinessRequest(null)
+      setPendingVerification(null)
+      setFeedback({
+        tone: 'success',
+        message: kind === 'business' ? 'Business marked as verified.' : `Merchant marked as ${status}.`,
+      })
+      if (kind === 'business') fetchBusinessRequests()
+      else fetchRequests()
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Failed to process verification decision.'
+      setFeedback({ tone: 'error', message })
+      throw err instanceof Error ? err : new Error(message)
+    } finally {
       setIsProcessing(false)
-      return
     }
-
-    setSelectedRequest(null)
-    setSelectedBusinessRequest(null)
-    setPendingVerification(null)
-    setFeedback({
-      tone: 'success',
-      message: kind === 'business' ? 'Business marked as verified.' : `Merchant marked as ${status}.`,
-    })
-    setIsProcessing(false)
-    if (kind === 'business') fetchBusinessRequests()
-    else fetchRequests()
   }
 
   const executeVerificationReject = async (payload: { category: string; reason: string }) => {
-    if (!pendingVerification) return
+    if (!pendingVerification) {
+      throw new Error('No verification selected.')
+    }
     const { requestId, profileId, status, kind } = pendingVerification
-    if (status !== 'rejected') return
+    if (status !== 'rejected') {
+      throw new Error('This confirm is for reject only.')
+    }
 
     setIsProcessing(true)
     setFeedback({ tone: 'info', message: 'Processing moderation decision...' })
@@ -493,35 +516,45 @@ export default function ModeratorPage() {
         ? '/api/admin/moderation/business-verification'
         : '/api/admin/moderation/verification'
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId,
-        profileId,
-        decision: status,
-        reasonCategory: payload.category,
-        reason: payload.reason,
-      }),
-    })
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          profileId,
+          decision: status,
+          reasonCategory: payload.category,
+          reason: payload.reason,
+        }),
+      })
 
-    if (!response.ok) {
-      const errorMessage = await parseApiError(response, 'Failed to process verification decision.')
-      setFeedback({ tone: 'error', message: errorMessage })
+      if (!response.ok) {
+        const errorMessage = await parseApiError(response, 'Failed to process verification decision.')
+        setFeedback({ tone: 'error', message: errorMessage })
+        throw new Error(errorMessage)
+      }
+
+      setSelectedRequest(null)
+      setSelectedBusinessRequest(null)
+      setPendingVerification(null)
+      setFeedback({
+        tone: 'success',
+        message: kind === 'business' ? 'Business verification rejected.' : 'Merchant marked as rejected.',
+      })
+      if (kind === 'business') fetchBusinessRequests()
+      else fetchRequests()
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Failed to process verification decision.'
+      setFeedback({ tone: 'error', message })
+      throw err instanceof Error ? err : new Error(message)
+    } finally {
       setIsProcessing(false)
-      return
     }
-
-    setSelectedRequest(null)
-    setSelectedBusinessRequest(null)
-    setPendingVerification(null)
-    setFeedback({
-      tone: 'success',
-      message: kind === 'business' ? 'Business verification rejected.' : 'Merchant marked as rejected.',
-    })
-    setIsProcessing(false)
-    if (kind === 'business') fetchBusinessRequests()
-    else fetchRequests()
   }
 
   // KYC list loading is scoped to that tab (do not block Business / Abuse / etc).
@@ -558,17 +591,17 @@ export default function ModeratorPage() {
         title={pendingVerification?.kind === 'business' ? 'Verify this business?' : 'Verify this merchant?'}
         description={
           pendingVerification?.kind === 'business'
-            ? `Approve CAC business verification for ${pendingVerification?.displayName ?? 'this seller'}. Their Verified badge will upgrade to a double check.`
+            ? `Approve CAC business verification for ${pendingVerification?.displayName ?? 'this seller'}. Their profile chip upgrades from Verified to Business.`
             : `Approve verification for ${pendingVerification?.displayName ?? 'this merchant'}. They will gain verified status.`
         }
         impactSummary={
           pendingVerification?.kind === 'business'
-            ? 'Seller keeps identity verified and gains the double-check Verified badge. Identity KYC is unchanged.'
+            ? 'Seller keeps identity verified. The profile chip upgrades from Verified to Business. Identity KYC is unchanged.'
             : 'Merchant will be marked verified and can use verified-only features.'
         }
         confirmLabel="Verify"
         submitting={isProcessing}
-        onClose={() => setPendingVerification(null)}
+        onClose={closeVerificationModal}
         onConfirm={executeVerification}
       />
       <ActionReasonModal
@@ -600,7 +633,7 @@ export default function ModeratorPage() {
               ]
         }
         submitting={isProcessing}
-        onClose={() => setPendingVerification(null)}
+        onClose={closeVerificationModal}
         onSubmit={executeVerificationReject}
       />
 
@@ -1244,7 +1277,7 @@ export default function ModeratorPage() {
                               )
                             }
                             type="button"
-                            className="flex-1 flex items-center justify-center gap-2 bg-white border border-red-200 text-red-600 py-2.5 rounded-lg text-xs font-bold hover:bg-red-50 transition"
+                            className="flex-1 flex items-center justify-center gap-2 bg-white border border-red-200 text-red-600 py-2.5 rounded-lg text-xs font-bold hover:bg-red-50 transition disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <XCircle size={14} /> Reject
                           </button>
@@ -1258,7 +1291,7 @@ export default function ModeratorPage() {
                               )
                             }
                             type="button"
-                            className="flex-1 flex items-center justify-center gap-2 bg-teal-600 text-white py-2.5 rounded-lg text-xs font-bold hover:bg-teal-700 transition"
+                            className="flex-1 flex items-center justify-center gap-2 bg-teal-600 text-white py-2.5 rounded-lg text-xs font-bold hover:bg-teal-700 transition disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {isProcessing ? (
                               <Loader2 size={14} className="animate-spin" />

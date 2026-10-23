@@ -54,14 +54,18 @@ export async function POST(request: Request) {
   if (error) {
     const msg = error.message || ''
     const isSelf = /cannot_decide_own_verification/i.test(msg)
+    const missingFn = /could not find the function|schema cache|PGRST202/i.test(msg)
+    const friendly = isSelf
+      ? 'You cannot approve or reject your own business verification. Another admin must review it.'
+      : missingFn
+        ? 'Business verification RPC is missing on the database. Apply the latest CAC verify migration and try again.'
+        : msg || 'Failed to apply business verification decision.'
     return NextResponse.json(
       {
-        error: isSelf
-          ? 'You cannot approve or reject your own business verification. Another admin must review it.'
-          : msg,
+        error: friendly,
         debug: { failedStep: 'admin_decide_business_verification', requestId, profileId, decision },
       },
-      { status: isSelf ? 403 : 400 }
+      { status: isSelf ? 403 : missingFn ? 500 : 400 }
     )
   }
 

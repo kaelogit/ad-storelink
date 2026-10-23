@@ -1,5 +1,8 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+
 type ConfirmActionModalProps = {
   open: boolean
   title: string
@@ -28,14 +31,32 @@ export function ConfirmActionModal({
   onConfirm,
   children,
 }: ConfirmActionModalProps) {
-  if (!open) return null
+  const [mounted, setMounted] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (open) setError(null)
+  }, [open])
+
+  if (!open || !mounted) return null
 
   const handleConfirm = () => {
+    setError(null)
     void Promise.resolve(onConfirm())
+      .then(() => {
+        setError(null)
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error && err.message ? err.message : 'Action failed. Try again.')
+      })
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-2xl">
         <div className="border-b border-gray-100 px-6 py-4">
           <h2 className="text-lg font-bold text-gray-900">{title}</h2>
@@ -52,6 +73,11 @@ export function ConfirmActionModal({
             </p>
           )}
           {children}
+          {error ? (
+            <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {error}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4">
@@ -77,6 +103,7 @@ export function ConfirmActionModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

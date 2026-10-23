@@ -13,9 +13,13 @@ export async function createServerSupabaseClient() {
           return cookieStore.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options)
-          })
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options)
+            })
+          } catch {
+            // Route handlers can still read the session if refresh cookie writes fail.
+          }
         },
       },
     }
