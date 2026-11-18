@@ -12,6 +12,7 @@ import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal
 import { parseApiError } from '../../../utils/http'
 import { DisputeChatTranscriptPanel } from '../../../components/admin/DisputeChatTranscriptPanel'
 import { ChatCommerceLinksPanel } from '../../../components/admin/ChatCommerceLinksPanel'
+import { BookingDisputeCasePanel } from '../../../components/admin/BookingDisputeCasePanel'
 import { isActiveProductOrderDispute } from '../../../utils/disputeChat'
 import { Card, CardHeader, CardContent, Button, Badge, Input } from '../../../components/ui'
 import { TabsRoot, Tab } from '../../../components/ui'
@@ -114,8 +115,23 @@ export default function SupportWorkspace() {
   }
 
   const inboxTicket = tickets.find((t) => t.id === selectedTicketId) as
-    | { category?: string | null; attachment_urls?: string[] | null }
+    | {
+        category?: string | null
+        attachment_urls?: string[] | null
+        reference_id?: string | null
+      }
     | undefined
+  const activeTicketCategory = String(
+    inboxTicket?.category ?? (conversation as { ticket?: { category?: string } } | null)?.ticket?.category ?? '',
+  ).toUpperCase()
+  const activeTicketReferenceId = String(
+    inboxTicket?.reference_id ??
+      (conversation as { ticket?: { reference_id?: string } } | null)?.ticket?.reference_id ??
+      '',
+  ).trim()
+  const isBookingDisputeCase =
+    activeTicketCategory === 'BOOKING_DISPUTE' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeTicketReferenceId)
   const attachmentUrls: string[] = Array.isArray(inboxTicket?.attachment_urls)
     ? (inboxTicket!.attachment_urls as string[]).filter(Boolean)
     : Array.isArray((conversation as { ticket?: { attachment_urls?: string[] } } | null)?.ticket?.attachment_urls)
@@ -460,10 +476,18 @@ export default function SupportWorkspace() {
                 </Card>
                 <Card className="flex max-h-80 min-h-0 flex-col overflow-hidden lg:max-h-none">
                     <CardHeader className="flex shrink-0 flex-row items-center gap-2 bg-background py-3 text-xs font-bold uppercase text-(--muted)">
-                        <RefreshCcw size={14} /> Diagnostic Sidekick
+                        <RefreshCcw size={14} />{' '}
+                        {isBookingDisputeCase ? 'Dispute case' : 'Diagnostic Sidekick'}
                     </CardHeader>
-                    <CardContent className="min-h-0 flex-1 overflow-y-auto">
-                        <form onSubmit={searchOrder} className="mb-4 flex gap-2">
+                    <CardContent className="min-h-0 flex-1 space-y-4 overflow-y-auto">
+                        {isBookingDisputeCase && selectedTicketId ? (
+                          <BookingDisputeCasePanel
+                            referenceId={activeTicketReferenceId}
+                            activeTicketId={selectedTicketId}
+                            onOpenTicket={(id) => void openTicket(id)}
+                          />
+                        ) : null}
+                        <form onSubmit={searchOrder} className="flex gap-2">
                             <Input
                               placeholder="Order Ref..."
                               className="flex-1 font-mono text-xs"
@@ -706,6 +730,7 @@ function ticketCategoryLabel(category: string | null | undefined): string {
   if (c === 'IDENTITY') return 'Identity'
   if (c === 'GENERAL') return 'General'
   if (c === 'SAFETY') return 'Safety'
+  if (c === 'BOOKING_DISPUTE') return 'Booking dispute'
   return c || 'General'
 }
 
@@ -715,7 +740,7 @@ function ticketCategoryTone(
   const c = (category || '').toUpperCase()
   if (c === 'SUGGESTION') return 'success'
   if (c === 'TECHNICAL') return 'warning'
-  if (c === 'PAYMENT' || c === 'IDENTITY') return 'danger'
+  if (c === 'PAYMENT' || c === 'IDENTITY' || c === 'BOOKING_DISPUTE') return 'danger'
   return 'neutral'
 }
 
