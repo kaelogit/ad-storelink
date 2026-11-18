@@ -139,6 +139,9 @@ function bookingIsPaidInFull(booking: BookingDetail): boolean {
 }
 
 function bookingBlocksForceComplete(booking: BookingDetail): boolean {
+  // Dispute verdict "release to seller" may complete on a deposit-only booking
+  // (release whatever is held). Do not require paid_in_full in that case.
+  if (isActiveServiceDispute(booking)) return false
   const deposit = Boolean(booking.booking_timeline?.deposit_enabled_snapshot)
   const paymentState = String(booking.booking_timeline?.payment_state || '').toLowerCase()
   if (deposit && paymentState !== 'paid_in_full') return true
@@ -957,6 +960,10 @@ export default function BookingsPage() {
                               ? ` (now: ${booking.booking_timeline.payment_state})`
                               : ''}
                             .
+                          </p>
+                        ) : isActiveServiceDispute(booking) ? (
+                          <p className="text-[10px] text-red-700/80 leading-snug">
+                            Releases held escrow to the seller (deposit-only OK on disputes).
                           </p>
                         ) : null}
                         <button
