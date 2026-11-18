@@ -45,9 +45,15 @@ type BookingDetail = {
   is_custom_quote: boolean
   custom_description: string | null
   dispute_metadata: Record<string, unknown> | null
-  dispute_state?: 'none' | 'under_review' | 'disputed' | 'refunded'
+  dispute_state?: 'none' | 'under_review' | 'disputed' | 'refunded' | 'resolved'
   dispute_reason?: string | null
   dispute_note?: string | null
+  dispute_resolution?: {
+    outcome?: string | null
+    outcome_label?: string | null
+    note?: string | null
+    resolved_at?: string | null
+  } | null
   released_at_start: string | null
   released_at_complete: string | null
   created_at: string
@@ -84,6 +90,8 @@ type BookingDetail = {
   dispute_support?: {
     buyer_ticket_id?: string | null
     seller_ticket_id?: string | null
+    buyer_ticket_status?: string | null
+    seller_ticket_status?: string | null
   } | null
 }
 
@@ -753,8 +761,8 @@ export default function BookingsPage() {
                           Case desk · Help Center
                         </p>
                         <p className="text-[11px] text-orange-950/80 leading-relaxed">
-                          Continue the dispute in Support tickets (not P2P). Buyer and seller each have a
-                          thread linked to this booking.
+                          Talk to both parties in Support tickets (not P2P). When you Force complete /
+                          refund / cancel, your reason is posted to both tickets and they close.
                         </p>
                         <div className="flex flex-wrap gap-2">
                           {booking.dispute_support?.buyer_ticket_id ? (
@@ -764,7 +772,11 @@ export default function BookingsPage() {
                               )}`}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-orange-900 hover:bg-orange-50"
                             >
-                              <FileText size={12} /> Open buyer ticket <ExternalLink size={11} />
+                              <FileText size={12} /> Buyer ticket
+                              {booking.dispute_support.buyer_ticket_status
+                                ? ` · ${booking.dispute_support.buyer_ticket_status}`
+                                : ''}{' '}
+                              <ExternalLink size={11} />
                             </Link>
                           ) : (
                             <span className="text-[11px] text-orange-800/70">Buyer ticket pending…</span>
@@ -776,7 +788,11 @@ export default function BookingsPage() {
                               )}`}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-orange-900 hover:bg-orange-50"
                             >
-                              <FileText size={12} /> Open seller ticket <ExternalLink size={11} />
+                              <FileText size={12} /> Seller ticket
+                              {booking.dispute_support.seller_ticket_status
+                                ? ` · ${booking.dispute_support.seller_ticket_status}`
+                                : ''}{' '}
+                              <ExternalLink size={11} />
                             </Link>
                           ) : (
                             <span className="text-[11px] text-orange-800/70">Seller ticket pending…</span>
@@ -788,6 +804,23 @@ export default function BookingsPage() {
                             Support inbox
                           </Link>
                         </div>
+                        {booking.dispute_resolution?.outcome_label ? (
+                          <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-2.5 py-2">
+                            <p className="text-[11px] font-bold text-emerald-900">
+                              Resolved · {booking.dispute_resolution.outcome_label}
+                            </p>
+                            {booking.dispute_resolution.note ? (
+                              <p className="mt-1 text-[11px] text-emerald-900/80 whitespace-pre-wrap">
+                                {booking.dispute_resolution.note}
+                              </p>
+                            ) : null}
+                            {booking.dispute_resolution.resolved_at ? (
+                              <p className="mt-1 text-[10px] font-mono text-emerald-800/70">
+                                {new Date(booking.dispute_resolution.resolved_at).toLocaleString()}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     </section>
                   )}
@@ -892,10 +925,13 @@ export default function BookingsPage() {
                   {canIntervene ? (
                     <section className="rounded-xl border border-red-200 bg-red-50 p-4">
                       <h4 className="text-xs font-bold text-red-800 uppercase mb-2 flex items-center gap-2">
-                        <AlertTriangle size={14} /> Intervention
+                        <AlertTriangle size={14} />{' '}
+                        {isActiveServiceDispute(booking) ? 'Dispute verdict' : 'Intervention'}
                       </h4>
                       <p className="text-[11px] text-red-700/90 mb-3">
-                        Overrides skip the normal booking flow. Always leave a reason. Audited.
+                        {isActiveServiceDispute(booking)
+                          ? 'Your reason is required (min 10 chars). It is posted to both Help Center tickets and both tickets close.'
+                          : 'Overrides skip the normal booking flow. Always leave a reason. Audited.'}
                       </p>
                       <div className="space-y-2">
                         <button
@@ -910,7 +946,9 @@ export default function BookingsPage() {
                           className="w-full bg-white border border-red-200 text-red-700 font-bold py-2 rounded-lg text-xs hover:bg-red-100 transition flex items-center justify-center gap-2 disabled:opacity-40"
                         >
                           {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-                          Force complete
+                          {isActiveServiceDispute(booking)
+                            ? 'Resolve · release to seller'
+                            : 'Force complete'}
                         </button>
                         {bookingBlocksForceComplete(booking) ? (
                           <p className="text-[10px] text-red-700/80 leading-snug">
@@ -937,7 +975,9 @@ export default function BookingsPage() {
                           className="w-full bg-orange-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-orange-700 transition flex items-center justify-center gap-2"
                         >
                           {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
-                          Force refund (company-funded)
+                          {isActiveServiceDispute(booking)
+                            ? 'Resolve · refund buyer'
+                            : 'Force refund (company-funded)'}
                         </button>
                       </div>
                     </section>
@@ -963,18 +1003,30 @@ export default function BookingsPage() {
         open={pendingStatus !== null}
         title={
           pendingStatus === 'completed'
-            ? 'Confirm Force Complete'
+            ? booking && isActiveServiceDispute(booking)
+              ? 'Resolve dispute · release to seller'
+              : 'Confirm Force Complete'
             : pendingStatus === 'cancelled'
               ? 'Confirm Force Cancel'
-              : 'Confirm Force Refund'
+              : booking && isActiveServiceDispute(booking)
+                ? 'Resolve dispute · refund buyer'
+                : 'Confirm Force Refund'
         }
-        description="Provide a reason for this admin intervention."
+        description={
+          booking && isActiveServiceDispute(booking)
+            ? 'Write the decision note parties will see in Help Center (min 10 characters).'
+            : 'Provide a reason for this admin intervention.'
+        }
         impactSummary={
           pendingStatus === 'completed'
-            ? 'Booking will be marked complete only if escrow is paid in full; otherwise the server rejects the action.'
+            ? booking && isActiveServiceDispute(booking)
+              ? 'Booking completes in seller’s favor. Both dispute tickets get this note and close.'
+              : 'Booking will be marked complete only if escrow is paid in full; otherwise the server rejects the action.'
             : pendingStatus === 'cancelled'
               ? 'Booking will be cancelled without running a payment refund. Use for unpaid/invalid bookings.'
-              : 'Booking will be marked refunded and refund execution will be attempted. Use for approved dispute outcomes.'
+              : booking && isActiveServiceDispute(booking)
+                ? 'Paystack refund runs, then booking is marked refunded. Both dispute tickets get this note and close.'
+                : 'Booking will be marked refunded and refund execution will be attempted. Use for approved dispute outcomes.'
         }
         categoryOptions={[
           { value: 'fraud', label: 'Fraud risk' },
