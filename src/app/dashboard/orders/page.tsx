@@ -30,6 +30,8 @@ import {
   ArrowLeft,
   ExternalLink,
   Coins,
+  Calendar,
+  Wallet,
 } from 'lucide-react'
 
 type OrderListRow = {
@@ -58,6 +60,43 @@ type OrderItem = {
   quantity?: number | null
   price?: number | null
   image?: string | null
+  kind?: string | null
+  service_order_id?: string | null
+}
+
+type ServiceBookingLink = {
+  id: string
+  status?: string | null
+  amount_minor?: number | null
+  currency_code?: string | null
+  payment_state?: string | null
+  scheduled_at?: string | null
+  released_at_start?: string | null
+  released_at_complete?: string | null
+  is_quick_book?: boolean | null
+  is_custom_quote?: boolean | null
+  title?: string | null
+  listing_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  payouts?: ServicePayoutRow[] | null
+}
+
+type ServicePayoutRow = {
+  id?: string
+  leg?: string | null
+  phase?: string | null
+  status?: string | null
+  payout_status?: string | null
+  amount_minor?: number | null
+  amount_main?: number | null
+  currency_code?: string | null
+  platform_fee?: number | null
+  net_payout?: number | null
+  payout_reference?: string | null
+  eligible_at?: string | null
+  updated_at?: string | null
+  created_at?: string | null
 }
 
 const TERMINAL_STATUSES = new Set(['COMPLETED', 'CANCELLED'])
@@ -250,6 +289,13 @@ export default function OrderOps() {
   const status = String(order?.status || '').toUpperCase()
   const isTerminal = TERMINAL_STATUSES.has(status)
   const items: OrderItem[] = Array.isArray(order?.items) ? order.items : []
+  const serviceBookings: ServiceBookingLink[] = Array.isArray(order?.service_bookings)
+    ? order.service_bookings
+    : []
+  const isServicePayment =
+    Boolean(order?.is_service_payment) ||
+    serviceBookings.length > 0 ||
+    items.some((item) => String(item.kind || '').toLowerCase() === 'service')
 
   const copyText = async (value: string, label: string) => {
     try {
@@ -367,9 +413,9 @@ export default function OrderOps() {
                       </td>
                       <td className="p-3">{row.buyer_display_name}</td>
                       <td className="p-3">{row.seller_display_name}</td>
-                      <td className="p-3 font-mono text-xs text-gray-500">{row.payment_reference || '—'}</td>
+                      <td className="p-3 font-mono text-xs text-gray-500">{row.payment_reference || '-'}</td>
                       <td className="p-3 text-gray-500">
-                        {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                        {row.created_at ? new Date(row.created_at).toLocaleString() : '-'}
                       </td>
                     </tr>
                   ))}
@@ -425,6 +471,11 @@ export default function OrderOps() {
                   <div className="flex-1 p-5 lg:p-6 space-y-4">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusChip status={status} large />
+                      {isServicePayment ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-bold text-teal-800 ring-1 ring-teal-200">
+                          <Calendar size={12} /> Service payment
+                        </span>
+                      ) : null}
                       {order.dispute ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700">
                           <AlertTriangle size={12} /> Dispute: {order.dispute.reason}
@@ -456,7 +507,7 @@ export default function OrderOps() {
                       <MetaTile
                         icon={CreditCard}
                         label="Paystack ref"
-                        value={order.reference || '—'}
+                        value={order.reference || '-'}
                         mono
                         onCopy={order.reference ? () => void copyText(String(order.reference), 'Paystack ref') : undefined}
                       />
@@ -480,7 +531,7 @@ export default function OrderOps() {
                   </div>
                   <div className="lg:w-72 border-t lg:border-t-0 lg:border-l border-gray-100 bg-gray-50/80 p-5 lg:p-6">
                     <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-3">Lifecycle</p>
-                    <OrderTimeline order={order} />
+                    <OrderTimeline order={order} serviceMode={isServicePayment} />
                   </div>
                 </div>
               </div>
@@ -508,8 +559,24 @@ export default function OrderOps() {
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold text-gray-900 truncate">{item.name || 'Product'}</p>
-                              <p className="text-xs text-gray-500">Qty {item.quantity ?? 1}</p>
+                              <p className="text-sm font-semibold text-gray-900 truncate">
+                                {item.name || (String(item.kind || '').toLowerCase() === 'service' ? 'Service booking' : 'Product')}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {String(item.kind || '').toLowerCase() === 'service' ? 'Service · ' : ''}
+                                Qty {item.quantity ?? 1}
+                                {item.service_order_id ? (
+                                  <>
+                                    {' · '}
+                                    <Link
+                                      href={`/dashboard/bookings?q=${encodeURIComponent(item.service_order_id)}`}
+                                      className="font-semibold text-blue-600 hover:underline"
+                                    >
+                                      Open booking
+                                    </Link>
+                                  </>
+                                ) : null}
+                              </p>
                             </div>
                             <p className="text-sm font-mono text-gray-800">
                               {order.currency || 'NGN'} {Number(item.price || 0).toLocaleString()}
@@ -519,6 +586,138 @@ export default function OrderOps() {
                       </ul>
                     )}
                   </section>
+
+                  {serviceBookings.length > 0 ? (
+                    <section className="rounded-xl border border-teal-200 bg-teal-50/40 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-teal-100 flex items-center justify-between">
+                        <h3 className="text-sm font-bold text-teal-950 flex items-center gap-2">
+                          <Calendar size={14} /> Linked service booking
+                          {serviceBookings.length > 1 ? `s (${serviceBookings.length})` : ''}
+                        </h3>
+                      </div>
+                      <ul className="divide-y divide-teal-100">
+                        {serviceBookings.map((booking) => {
+                          const payouts = Array.isArray(booking.payouts) ? booking.payouts : []
+                          const paidOut = payouts.filter((p) =>
+                            ['paid', 'success', 'completed'].includes(
+                              String(p.payout_status || p.status || '').toLowerCase(),
+                            ),
+                          )
+                          const paidMinor = paidOut.reduce(
+                            (sum, p) => sum + Number(p.amount_minor || 0),
+                            0,
+                          )
+                          const currency = booking.currency_code || order.currency || 'NGN'
+                          return (
+                            <li key={booking.id} className="px-4 py-3 space-y-3">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-bold text-gray-900 truncate">
+                                    {booking.title || 'Service booking'}
+                                  </p>
+                                  <p className="text-xs text-gray-600 mt-0.5">
+                                    Status{' '}
+                                    <span className="font-semibold">{booking.status || '-'}</span>
+                                    {booking.payment_state
+                                      ? ` · payment ${booking.payment_state}`
+                                      : ''}
+                                  </p>
+                                  <p className="text-[11px] font-mono text-gray-500 mt-1 break-all">
+                                    {booking.id}
+                                  </p>
+                                </div>
+                                <Link
+                                  href={`/dashboard/bookings?q=${encodeURIComponent(booking.id)}`}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-teal-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-teal-800 hover:bg-teal-50"
+                                >
+                                  Open booking <ExternalLink size={11} />
+                                </Link>
+                              </div>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <div className="rounded-lg bg-white/80 border border-teal-100 px-2.5 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                                    Booking total
+                                  </p>
+                                  <p className="text-xs font-mono font-semibold text-gray-900 mt-0.5">
+                                    {formatMinorMoney(booking.amount_minor, currency)}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg bg-white/80 border border-teal-100 px-2.5 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                                    Paid out
+                                  </p>
+                                  <p className="text-xs font-mono font-semibold text-gray-900 mt-0.5">
+                                    {formatMinorMoney(paidMinor, currency)}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg bg-white/80 border border-teal-100 px-2.5 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                                    Start released
+                                  </p>
+                                  <p className="text-xs text-gray-800 mt-0.5">
+                                    {booking.released_at_start
+                                      ? new Date(booking.released_at_start).toLocaleString()
+                                      : 'Pending'}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg bg-white/80 border border-teal-100 px-2.5 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                                    Complete released
+                                  </p>
+                                  <p className="text-xs text-gray-800 mt-0.5">
+                                    {booking.released_at_complete
+                                      ? new Date(booking.released_at_complete).toLocaleString()
+                                      : 'Pending'}
+                                  </p>
+                                </div>
+                              </div>
+                              {payouts.length > 0 ? (
+                                <div className="rounded-lg border border-teal-100 bg-white overflow-hidden">
+                                  <div className="px-3 py-2 border-b border-teal-50 flex items-center gap-1.5">
+                                    <Wallet size={12} className="text-teal-700" />
+                                    <p className="text-[11px] font-bold text-teal-900 uppercase tracking-wide">
+                                      Payout legs
+                                    </p>
+                                  </div>
+                                  <ul className="divide-y divide-teal-50">
+                                    {payouts.map((payout, idx) => (
+                                      <li
+                                        key={payout.id || `${booking.id}-payout-${idx}`}
+                                        className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+                                      >
+                                        <div>
+                                          <p className="font-semibold text-gray-900">
+                                            {String(payout.leg || payout.phase || 'leg').toUpperCase()}
+                                          </p>
+                                          <p className="text-[11px] text-gray-500">
+                                            {payout.payout_status || payout.status || '-'}
+                                            {payout.payout_reference
+                                              ? ` · ${payout.payout_reference}`
+                                              : ''}
+                                          </p>
+                                        </div>
+                                        <p className="font-mono text-gray-800">
+                                          {formatMinorMoney(
+                                            payout.amount_minor ??
+                                              (payout.amount_main != null
+                                                ? Number(payout.amount_main) * 100
+                                                : 0),
+                                            payout.currency_code || currency,
+                                          )}
+                                        </p>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-gray-500">No payout legs recorded yet.</p>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </section>
+                  ) : null}
 
                   {order.chat_id ? (
                     <ChatCommerceLinksPanel
@@ -533,7 +732,7 @@ export default function OrderOps() {
                     <DisputeChatTranscriptPanel
                       key={order.id}
                       title="Order chat (dispute)"
-                      description="Load the buyer–seller thread for this order. Access is limited to active disputes; each load is written to the audit log. Use only for resolving this case."
+                      description="Load the buyer-seller thread for this order. Access is limited to active disputes; each load is written to the audit log. Use only for resolving this case."
                       conversationId={order.chat_id}
                       entityId={order.id}
                       endpoint="/api/admin/orders/order-chat"
@@ -566,9 +765,13 @@ export default function OrderOps() {
                         <MapPin size={16} />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Delivery address</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase">
+                          {isServicePayment ? 'Fulfillment' : 'Delivery address'}
+                        </p>
                         <p className="text-sm text-gray-800 mt-1 leading-relaxed whitespace-pre-wrap">
-                          {formatShippingAddress(order.shipping_address)}
+                          {isServicePayment
+                            ? formatServiceFulfillment(order.shipping_address)
+                            : formatShippingAddress(order.shipping_address)}
                         </p>
                       </div>
                     </div>
@@ -617,7 +820,7 @@ export default function OrderOps() {
                         <AlertTriangle size={14} /> Intervention
                       </h4>
                       <p className="text-[11px] text-red-700/90 mb-3">
-                        Overrides skip the normal buyer/seller flow. Always leave a reason — audited.
+                        Overrides skip the normal buyer/seller flow. Always leave a reason. Audited.
                       </p>
                       <div className="space-y-2">
                         {status !== 'COMPLETED' && (
@@ -693,13 +896,13 @@ export default function OrderOps() {
 }
 
 function partyName(party?: OrderParty | null) {
-  if (!party) return '—'
+  if (!party) return '-'
   return (
     party.name ||
     party.display_name ||
     party.slug ||
     (party.email ? String(party.email).split('@')[0] : null) ||
-    '—'
+    '-'
   )
 }
 
@@ -777,12 +980,18 @@ function MetaTile({
   )
 }
 
-function OrderTimeline({ order }: { order: any }) {
+function OrderTimeline({ order, serviceMode }: { order: any; serviceMode?: boolean }) {
   const status = String(order?.status || '').toUpperCase()
   const paid = PAID_LIKE.has(status) || Boolean(order?.reference)
   const shipped = Boolean(order?.shipped_at) || status === 'SHIPPED' || status === 'COMPLETED'
   const completed = status === 'COMPLETED'
   const cancelled = status === 'CANCELLED'
+  const bookings: ServiceBookingLink[] = Array.isArray(order?.service_bookings)
+    ? order.service_bookings
+    : []
+  const primaryBooking = bookings[0]
+  const startReleased = Boolean(primaryBooking?.released_at_start)
+  const completeReleased = Boolean(primaryBooking?.released_at_complete)
 
   if (cancelled) {
     return (
@@ -794,6 +1003,42 @@ function OrderTimeline({ order }: { order: any }) {
           label="Cancelled"
           date={order.updated_at}
           state="error"
+          isLast
+        />
+      </div>
+    )
+  }
+
+  if (serviceMode) {
+    return (
+      <div className="space-y-4 relative pl-1">
+        <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-gray-200" />
+        <TimelineItem icon={Package} label="Payment shell created" date={order.created_at} state="done" />
+        <TimelineItem
+          icon={CreditCard}
+          label="Payment secured"
+          date={paid ? order.created_at : null}
+          state={paid ? 'done' : 'pending'}
+          hint={!paid ? 'Awaiting Paystack' : undefined}
+        />
+        <TimelineItem
+          icon={Wallet}
+          label="Start payout (≈30%)"
+          date={primaryBooking?.released_at_start || null}
+          state={startReleased ? 'done' : completed ? 'skipped' : 'pending'}
+          hint={
+            primaryBooking?.payment_state
+              ? `Booking payment: ${primaryBooking.payment_state}`
+              : primaryBooking?.status
+                ? `Booking: ${primaryBooking.status}`
+                : undefined
+          }
+        />
+        <TimelineItem
+          icon={CheckCircle}
+          label="Complete · remaining funds"
+          date={completeReleased ? primaryBooking?.released_at_complete : completed ? order.updated_at : null}
+          state={completeReleased || completed ? 'done' : 'pending'}
           isLast
         />
       </div>
@@ -896,8 +1141,32 @@ function StatusChip({ status, large }: { status: string; large?: boolean }) {
   )
 }
 
+function formatMinorMoney(amountMinor: number | null | undefined, currency: string): string {
+  const minor = Number(amountMinor || 0)
+  return `${currency} ${(minor / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function formatServiceFulfillment(raw: unknown): string {
+  if (!raw) return 'Service booking'
+  if (typeof raw === 'string') {
+    const t = raw.trim()
+    return t || 'Service booking'
+  }
+  if (typeof raw === 'object') {
+    const o = raw as Record<string, unknown>
+    if (typeof o.label === 'string' && o.label.trim()) return o.label.trim()
+    if (typeof o.type === 'string' && o.type.toLowerCase().includes('service')) {
+      return 'Service booking (no physical delivery)'
+    }
+  }
+  return formatShippingAddress(raw)
+}
+
 function formatShippingAddress(raw: unknown): string {
-  if (!raw) return '—'
+  if (!raw) return '-'
   if (typeof raw === 'string') return raw
   if (typeof raw === 'object') {
     const o = raw as Record<string, unknown>
@@ -915,7 +1184,7 @@ function formatShippingAddress(raw: unknown): string {
     try {
       return JSON.stringify(raw)
     } catch {
-      return '—'
+      return '-'
     }
   }
   return String(raw)
