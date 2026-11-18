@@ -81,6 +81,10 @@ type BookingDetail = {
   linked_order_id: string | null
   linked_payment_reference?: string | null
   policy_url?: string
+  dispute_support?: {
+    buyer_ticket_id?: string | null
+    seller_ticket_id?: string | null
+  } | null
 }
 
 type BookingListRow = {
@@ -539,16 +543,16 @@ export default function BookingsPage() {
                             {prettyDisputeState(row.dispute_state as BookingDetail['dispute_state']) ?? 'Dispute'}
                           </span>
                         ) : (
-                          <span className="text-[11px] text-gray-400">—</span>
+                          <span className="text-[11px] text-gray-400">-</span>
                         )}
                       </td>
                       <td className="p-3 font-mono">
                         {formatMoney(row.amount_minor ?? 0, row.currency_code)}
                       </td>
-                      <td className="p-3">{row.buyer_display_name ?? '—'}</td>
-                      <td className="p-3">{row.seller_display_name ?? '—'}</td>
+                      <td className="p-3">{row.buyer_display_name ?? '-'}</td>
+                      <td className="p-3">{row.seller_display_name ?? '-'}</td>
                       <td className="p-3 text-gray-500">
-                        {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                        {row.created_at ? new Date(row.created_at).toLocaleString() : '-'}
                       </td>
                     </tr>
                   ))}
@@ -654,14 +658,14 @@ export default function BookingsPage() {
                       <MetaTile
                         icon={CreditCard}
                         label="Paystack / linked ref"
-                        value={payRef || '—'}
+                        value={payRef || '-'}
                         mono
                         onCopy={payRef ? () => void copyText(String(payRef), 'Payment ref') : undefined}
                       />
                       <MetaTile
                         icon={Package}
                         label="Linked order"
-                        value={booking.linked_order_id || '—'}
+                        value={booking.linked_order_id || '-'}
                         mono
                         onCopy={
                           booking.linked_order_id
@@ -677,7 +681,7 @@ export default function BookingsPage() {
                       <MetaTile
                         icon={Calendar}
                         label="Scheduled"
-                        value={booking.scheduled_at ? new Date(booking.scheduled_at).toLocaleString() : '—'}
+                        value={booking.scheduled_at ? new Date(booking.scheduled_at).toLocaleString() : '-'}
                       />
                     </div>
 
@@ -721,7 +725,7 @@ export default function BookingsPage() {
                       <p className="mt-3 text-xs text-gray-600 whitespace-pre-wrap">{booking.custom_description}</p>
                     ) : null}
                     <p className="mt-4 text-[11px] text-gray-400 font-mono">
-                      Created {booking.created_at ? new Date(booking.created_at).toLocaleString() : '—'}
+                      Created {booking.created_at ? new Date(booking.created_at).toLocaleString() : '-'}
                     </p>
                   </div>
                 </div>
@@ -729,8 +733,8 @@ export default function BookingsPage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
-                  {(disputeReason || disputeNote) && (
-                    <section className="rounded-xl border border-orange-200 bg-orange-50/50 p-4 space-y-2">
+                  {(disputeReason || disputeNote || isActiveServiceDispute(booking)) && (
+                    <section className="rounded-xl border border-orange-200 bg-orange-50/50 p-4 space-y-3">
                       <h3 className="text-sm font-bold text-orange-950 flex items-center gap-2">
                         <AlertTriangle size={14} /> Dispute details
                       </h3>
@@ -744,6 +748,47 @@ export default function BookingsPage() {
                           <span className="font-semibold">Note:</span> {disputeNote}
                         </p>
                       ) : null}
+                      <div className="rounded-lg border border-orange-200 bg-white/80 p-3 space-y-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-orange-900/80">
+                          Case desk · Help Center
+                        </p>
+                        <p className="text-[11px] text-orange-950/80 leading-relaxed">
+                          Continue the dispute in Support tickets (not P2P). Buyer and seller each have a
+                          thread linked to this booking.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {booking.dispute_support?.buyer_ticket_id ? (
+                            <Link
+                              href={`/dashboard/support?ticket=${encodeURIComponent(
+                                booking.dispute_support.buyer_ticket_id,
+                              )}`}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-orange-900 hover:bg-orange-50"
+                            >
+                              <FileText size={12} /> Open buyer ticket <ExternalLink size={11} />
+                            </Link>
+                          ) : (
+                            <span className="text-[11px] text-orange-800/70">Buyer ticket pending…</span>
+                          )}
+                          {booking.dispute_support?.seller_ticket_id ? (
+                            <Link
+                              href={`/dashboard/support?ticket=${encodeURIComponent(
+                                booking.dispute_support.seller_ticket_id,
+                              )}`}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-orange-900 hover:bg-orange-50"
+                            >
+                              <FileText size={12} /> Open seller ticket <ExternalLink size={11} />
+                            </Link>
+                          ) : (
+                            <span className="text-[11px] text-orange-800/70">Seller ticket pending…</span>
+                          )}
+                          <Link
+                            href="/dashboard/support"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-orange-100 px-2.5 py-1.5 text-[11px] font-bold text-orange-800/80 hover:bg-orange-50"
+                          >
+                            Support inbox
+                          </Link>
+                        </div>
+                      </div>
                     </section>
                   )}
 
@@ -768,7 +813,7 @@ export default function BookingsPage() {
                         <div>
                           <h3 className="text-sm font-bold text-amber-950">Booking chat (dispute)</h3>
                           <p className="text-[11px] text-amber-900/90 mt-1 leading-relaxed">
-                            Load the buyer–seller thread for this booking. Access is limited to active disputes; each load
+                            Load the buyer-seller thread for this booking. Access is limited to active disputes; each load
                             is written to the audit log.
                           </p>
                         </div>
@@ -787,8 +832,8 @@ export default function BookingsPage() {
                         <div className="max-h-[420px] overflow-y-auto rounded-lg border border-amber-200/80 bg-white">
                           {disputeChatMessages.map((m) => {
                             const att = attachmentSummary(m)
-                            const when = m.created_at ? new Date(m.created_at).toLocaleString() : '—'
-                            const role = m.sender_role || '—'
+                            const when = m.created_at ? new Date(m.created_at).toLocaleString() : '-'
+                            const role = m.sender_role || '-'
                             const body = (m.text || '').trim()
                             return (
                               <div
@@ -850,7 +895,7 @@ export default function BookingsPage() {
                         <AlertTriangle size={14} /> Intervention
                       </h4>
                       <p className="text-[11px] text-red-700/90 mb-3">
-                        Overrides skip the normal booking flow. Always leave a reason — audited.
+                        Overrides skip the normal booking flow. Always leave a reason. Audited.
                       </p>
                       <div className="space-y-2">
                         <button
@@ -963,7 +1008,7 @@ function PartyBlock({
       <AdminAvatar size="md" src={party?.logo_url} name={party?.display_name || role} />
       <div className="min-w-0">
         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{role}</p>
-        <p className="font-bold text-gray-900 truncate">{party?.display_name || '—'}</p>
+        <p className="font-bold text-gray-900 truncate">{party?.display_name || '-'}</p>
         {party?.email ? <p className="text-xs text-gray-500 truncate">{party.email}</p> : null}
         {party?.phone ? <p className="text-xs text-gray-500">{party.phone}</p> : null}
         {party?.id ? (
@@ -1001,7 +1046,7 @@ function MetaTile({
           <Icon size={11} /> {label}
         </p>
         <div className="flex items-center gap-1">
-          {href && value !== '—' ? (
+          {href && value !== '-' ? (
             <Link href={href} className="text-blue-600 hover:text-blue-800">
               <ExternalLink size={12} />
             </Link>

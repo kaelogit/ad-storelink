@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
@@ -21,6 +22,9 @@ import {
 
 export default function SupportWorkspace() {
   const supabase = createClient()
+  const searchParams = useSearchParams()
+  const deepLinkTicketId = searchParams.get('ticket')
+  const deepLinkOpenedRef = useRef<string | null>(null)
   
   // 1. TOP LEVEL NAVIGATION
   const [activeTab, setActiveTab] = useState<'tickets' | 'ops'>('tickets')
@@ -50,8 +54,17 @@ export default function SupportWorkspace() {
 
   // --- INIT ---
   useEffect(() => {
-    fetchTickets()
+    void fetchTickets()
   }, [])
+
+  useEffect(() => {
+    if (!deepLinkTicketId || loadingTickets) return
+    if (deepLinkOpenedRef.current === deepLinkTicketId) return
+    deepLinkOpenedRef.current = deepLinkTicketId
+    setActiveTab('tickets')
+    void openTicket(deepLinkTicketId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once per ticket query
+  }, [deepLinkTicketId, loadingTickets])
 
   const fetchTickets = async () => {
     setLoadingTickets(true)
@@ -273,7 +286,7 @@ export default function SupportWorkspace() {
     <div className="flex min-h-0 flex-1 flex-col gap-4 md:min-h-[calc(100dvh-7rem)]">
       <PageHeader
         title="Support Desk"
-        subtitle="Customer care desk — look up orders, bookings, and user accounts."
+        subtitle="Customer care desk. Look up orders, bookings, and user accounts."
         actions={
           <DeskLinkPills
             links={[
@@ -525,7 +538,7 @@ export default function SupportWorkspace() {
                                 <DisputeChatTranscriptPanel
                                   key={order.id}
                                   title="Order chat (dispute)"
-                                  description="Load the buyer–seller thread linked to this order. Each load is audit-logged for dispute resolution."
+                                  description="Load the buyer-seller thread linked to this order. Each load is audit-logged for dispute resolution."
                                   conversationId={order.chat_id}
                                   entityId={order.id}
                                   endpoint="/api/admin/orders/order-chat"
