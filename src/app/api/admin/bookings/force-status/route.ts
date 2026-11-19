@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
+import { createServiceSupabaseClient } from '../../../../../utils/supabase/service'
 
 type ForceServiceOrderStatusPayload = {
   serviceOrderId?: string
@@ -90,7 +91,7 @@ async function refundOneOrder(
   }
 
   const previousPayoutStatus = order.payout_status || null
-  const { data: claimRow } = await supabase
+  const { data: claimRow, error: claimError } = await supabase
     .from('orders')
     .update({
       payout_status: 'refund_processing',
@@ -100,6 +101,15 @@ async function refundOneOrder(
     .not('payout_status', 'in', '(refunded,refund_processing)')
     .select('id, payment_reference, refund_status, payout_status')
     .maybeSingle()
+
+  if (claimError) {
+    return {
+      executed: false,
+      orderId: order.id,
+      currencyCode,
+      error: `Refund claim failed: ${claimError.message}`,
+    }
+  }
 
   if (!claimRow) {
     const { data: latestOrder } = await supabase
@@ -123,7 +133,8 @@ async function refundOneOrder(
       executed: false,
       orderId: order.id,
       currencyCode,
-      error: 'Refund could not be safely claimed. Retry shortly.',
+      error:
+        'Refund could not be safely claimed (order update blocked). Retry shortly or check admin order write access.',
     }
   }
 
@@ -333,6 +344,13 @@ export async function POST(request: Request) {
     sellerId: string
   } | null = null
 
+  // Order payout/refund columns have no admin UPDATE RLS — use service role after auth gate.
+  let serviceSupabase: ReturnType<typeof createServiceSupabaseClient> | null = null
+  const getServiceDb = () => {
+    if (!serviceSupabase) serviceSupabase = createServiceSupabaseClient()
+    return serviceSupabase
+  }
+
   if (newStatus === 'refunded') {
     const { data: so, error: soErr } = await auth.supabase
       .from('service_orders')
@@ -440,9 +458,23 @@ export async function POST(request: Request) {
       )
     }
 
+    let dbForRefund
+    try {
+      dbForRefund = getServiceDb()
+    } catch (err: any) {
+      return NextResponse.json(
+        {
+          error:
+            err?.message ||
+            'Server missing SUPABASE_SERVICE_ROLE_KEY; cannot update order refund fields under RLS.',
+        },
+        { status: 503 },
+      )
+    }
+
     const perOrderResults: NonNullable<(typeof refundResult)['orders']> = []
     for (const order of ordersToRefund) {
-      const result = await refundOneOrder(auth.supabase, order)
+      const result = await refundOneOrder(dbForRefund, order)
       perOrderResults.push({
         orderId: result.orderId,
         executed: result.executed,

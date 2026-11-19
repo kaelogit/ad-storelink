@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
+import { createServiceSupabaseClient } from '../../../../../utils/supabase/service'
 
 type ForceOrderStatusPayload = {
   orderId?: string
@@ -157,7 +158,21 @@ export async function POST(request: Request) {
         )
       }
       if (!isUnpaidOrder) {
-        const { data: claimRow } = await auth.supabase
+        let serviceDb
+        try {
+          serviceDb = createServiceSupabaseClient()
+        } catch (err: any) {
+          return NextResponse.json(
+            {
+              error:
+                err?.message ||
+                'Server missing SUPABASE_SERVICE_ROLE_KEY; cannot update order refund fields under RLS.',
+            },
+            { status: 503 },
+          )
+        }
+        // orders has admin SELECT but no UPDATE RLS — service role required for claim/refund marks.
+        const { data: claimRow, error: claimError } = await serviceDb
           .from('orders')
           .update({
             payout_status: 'refund_processing',
@@ -167,8 +182,14 @@ export async function POST(request: Request) {
           .not('payout_status', 'in', '(refunded,refund_processing)')
           .select('id, payout_status')
           .maybeSingle()
+        if (claimError) {
+          return NextResponse.json(
+            { error: `Refund claim failed: ${claimError.message}` },
+            { status: 409 },
+          )
+        }
         if (!claimRow) {
-          const { data: latestOrder } = await auth.supabase
+          const { data: latestOrder } = await serviceDb
             .from('orders')
             .select('payout_status, refund_status, payment_reference')
             .eq('id', orderId)
@@ -192,7 +213,7 @@ export async function POST(request: Request) {
         } else {
         const paystackKey = getPaystackKey(order.currency_code || 'NGN')
         if (!paystackKey) {
-          await auth.supabase
+          await serviceDb
             .from('orders')
             .update({ payout_status: previousPayoutStatus, updated_at: new Date().toISOString() })
             .eq('id', orderId)
@@ -227,7 +248,7 @@ export async function POST(request: Request) {
               paystackReference: order.payment_reference,
             }
           } else {
-            await auth.supabase
+            await serviceDb
               .from('orders')
               .update({
                 payout_status: previousPayoutStatus,
@@ -262,7 +283,22 @@ export async function POST(request: Request) {
     }
   }
 
-  const { error: updateError } = await auth.supabase
+  let serviceDbForStatus
+  try {
+    serviceDbForStatus = createServiceSupabaseClient()
+  } catch (err: any) {
+    return NextResponse.json(
+      {
+        error:
+          err?.message ||
+          'Server missing SUPABASE_SERVICE_ROLE_KEY; cannot update order status under RLS.',
+        refund: refundResult,
+      },
+      { status: 503 },
+    )
+  }
+
+  const { error: updateError } = await serviceDbForStatus
     .from('orders')
     .update({
       status: newStatus,
