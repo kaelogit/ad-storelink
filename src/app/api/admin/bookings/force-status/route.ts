@@ -44,7 +44,13 @@ function getPaystackKey(currencyCode: string): string | null {
                 : code === 'RWF'
                   ? 'RW'
                   : 'NG'
-  return process.env[`PAYSTACK_SECRET_KEY_${suffix}`] ?? (code === 'NGN' ? process.env.PAYSTACK_SECRET_KEY ?? null : null)
+  const raw =
+    process.env[`PAYSTACK_SECRET_KEY_${suffix}`] ??
+    (code === 'NGN' ? process.env.PAYSTACK_SECRET_KEY ?? null : null)
+  if (!raw) return null
+  // Public keys (pk_*) cannot call Refund API — Paystack returns "Invalid key".
+  if (raw.startsWith('pk_')) return null
+  return raw
 }
 
 function isProviderAlreadyRefunded(message: string | undefined): boolean {
@@ -148,7 +154,7 @@ async function refundOneOrder(
       executed: false,
       orderId: order.id,
       currencyCode,
-      error: `Missing Paystack key for ${currencyCode}. Set PAYSTACK_SECRET_KEY_*.`,
+      error: `Missing/invalid Paystack secret for ${currencyCode}. Set PAYSTACK_SECRET_KEY (or PAYSTACK_SECRET_KEY_NG) to sk_live_/sk_test_ — not pk_.`,
     }
   }
 
