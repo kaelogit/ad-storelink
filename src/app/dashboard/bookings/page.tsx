@@ -281,60 +281,64 @@ export default function BookingsPage() {
   }) => {
     if (!booking?.id) return
     if (status === 'completed' && bookingBlocksForceComplete(booking)) {
-      setFeedback({
-        tone: 'error',
-        message:
-          'Cannot force-complete until this booking is paid in full (deposit balance still due or escrow underfunded).',
-      })
+      const msg =
+        'Cannot force-complete until this booking is paid in full (deposit balance still due or escrow underfunded).'
+      setFeedback({ tone: 'error', message: msg })
       setPendingStatus(null)
-      return
+      throw new Error(msg)
     }
     setActionLoading(true)
     setFeedback({ tone: 'info', message: `Applying ${status}...` })
-    const response = await fetch('/api/admin/bookings/force-status', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': `support-booking-force-status-${booking.id}-${status}`,
-      },
-      body: JSON.stringify({
-        serviceOrderId: booking.id,
-        newStatus: status,
-        reasonCategory: category,
-        reason,
-      }),
-    })
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to update booking status.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const response = await fetch('/api/admin/bookings/force-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Unique per attempt so a failed refund+status can be retried safely.
+          'x-idempotency-key': `support-booking-force-status-${booking.id}-${status}-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          serviceOrderId: booking.id,
+          newStatus: status,
+          reasonCategory: category,
+          reason,
+        }),
+      })
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to update booking status.')
+        setFeedback({ tone: 'error', message: msg })
+        throw new Error(msg)
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        refund?: { executed?: boolean; orderId?: string; paystackReference?: string | null }
+        clawbackDebt?: { id?: string; amountMinor?: number; currencyCode?: string; sellerId?: string }
+        mode?: string
+      }
+      const { data } = await supabase.rpc('get_service_order_details_for_admin', { p_query: booking.id })
+      if (data) setBooking(await enrichBookingLogos(data as BookingDetail))
+      setPendingStatus(null)
+      const refundMsg =
+        status === 'refunded'
+          ? payload?.refund?.executed
+            ? ` Refund executed for order ${payload.refund.orderId?.slice(0, 8) ?? 'linked order'}.`
+            : ' Booking status changed but refund execution was not confirmed.'
+          : ''
+      const clawbackMsg =
+        status === 'refunded' && payload?.clawbackDebt?.id
+          ? ` Seller clawback debt opened: ${formatMoney(payload.clawbackDebt.amountMinor ?? 0, payload.clawbackDebt.currencyCode ?? booking.currency_code)}. Seller access is locked until repayment.`
+          : ''
+      if (status === 'refunded' && payload?.refund?.executed && payload.refund.paystackReference) {
+        setLastRefundRef(payload.refund.paystackReference)
+      } else if (status !== 'refunded') {
+        setLastRefundRef(null)
+      }
+      setFeedback({
+        tone: 'success',
+        message: `Booking status updated to ${status}.${refundMsg}${clawbackMsg}`.trim(),
+      })
+    } finally {
       setActionLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as {
-      refund?: { executed?: boolean; orderId?: string; paystackReference?: string | null }
-      clawbackDebt?: { id?: string; amountMinor?: number; currencyCode?: string; sellerId?: string }
-      mode?: string
-    }
-    const { data } = await supabase.rpc('get_service_order_details_for_admin', { p_query: booking.id })
-    if (data) setBooking(await enrichBookingLogos(data as BookingDetail))
-    setPendingStatus(null)
-    const refundMsg =
-      status === 'refunded'
-        ? payload?.refund?.executed
-          ? ` Refund executed for order ${payload.refund.orderId?.slice(0, 8) ?? 'linked order'}.`
-          : ' Booking status changed but refund execution was not confirmed.'
-        : ''
-    const clawbackMsg =
-      status === 'refunded' && payload?.clawbackDebt?.id
-        ? ` Seller clawback debt opened: ${formatMoney(payload.clawbackDebt.amountMinor ?? 0, payload.clawbackDebt.currencyCode ?? booking.currency_code)}. Seller access is locked until repayment.`
-        : ''
-    if (status === 'refunded' && payload?.refund?.executed && payload.refund.paystackReference) {
-      setLastRefundRef(payload.refund.paystackReference)
-    } else if (status !== 'refunded') {
-      setLastRefundRef(null)
-    }
-    setFeedback({ tone: 'success', message: `Booking status updated to ${status}.${refundMsg}${clawbackMsg}`.trim() })
-    setActionLoading(false)
   }
 
   const loadDisputeChat = async () => {

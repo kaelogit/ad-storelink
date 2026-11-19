@@ -268,7 +268,9 @@ export async function POST(request: Request) {
   if (newStatus === 'completed') {
     const { data: soGate, error: soGateErr } = await auth.supabase
       .from('service_orders')
-      .select('id, amount_minor, payment_state, deposit_enabled_snapshot')
+      .select(
+        'id, amount_minor, payment_state, deposit_enabled_snapshot, status, dispute_state, dispute_metadata',
+      )
       .eq('id', serviceOrderId)
       .maybeSingle()
     if (soGateErr || !soGate) {
@@ -276,26 +278,35 @@ export async function POST(request: Request) {
     }
     const paymentState = String(soGate.payment_state || '').toLowerCase()
     const deposit = Boolean(soGate.deposit_enabled_snapshot)
-    if (deposit && paymentState !== 'paid_in_full') {
-      return NextResponse.json(
-        {
-          error: `Cannot force-complete: deposit booking is not paid in full (payment_state=${soGate.payment_state || 'null'}).`,
-        },
-        { status: 400 },
-      )
-    }
-    const { data: heldRaw } = await auth.supabase.rpc('service_order_held_minor', {
-      p_service_order_id: serviceOrderId,
-    })
-    const held = Number(heldRaw ?? 0)
-    const total = Number(soGate.amount_minor ?? 0)
-    if (total > 0 && held < total && paymentState !== 'paid_in_full') {
-      return NextResponse.json(
-        {
-          error: `Cannot force-complete: escrow held (${held}) is below package total (${total}).`,
-        },
-        { status: 400 },
-      )
+    const disputeMeta = (soGate.dispute_metadata || {}) as Record<string, unknown>
+    const isDisputed =
+      String(soGate.status || '').toLowerCase() === 'disputed' ||
+      ['disputed', 'under_review'].includes(String(soGate.dispute_state || '').toLowerCase()) ||
+      Boolean(disputeMeta.dispute_claim) ||
+      Boolean(disputeMeta.dispute_support)
+    // Dispute "release to seller" may complete on deposit/partial escrow.
+    if (!isDisputed) {
+      if (deposit && paymentState !== 'paid_in_full') {
+        return NextResponse.json(
+          {
+            error: `Cannot force-complete: deposit booking is not paid in full (payment_state=${soGate.payment_state || 'null'}).`,
+          },
+          { status: 400 },
+        )
+      }
+      const { data: heldRaw } = await auth.supabase.rpc('service_order_held_minor', {
+        p_service_order_id: serviceOrderId,
+      })
+      const held = Number(heldRaw ?? 0)
+      const total = Number(soGate.amount_minor ?? 0)
+      if (total > 0 && held < total && paymentState !== 'paid_in_full') {
+        return NextResponse.json(
+          {
+            error: `Cannot force-complete: escrow held (${held}) is below package total (${total}).`,
+          },
+          { status: 400 },
+        )
+      }
     }
   }
 
@@ -334,9 +345,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
     }
 
-    const { data: moneySummary } = await auth.supabase.rpc('get_service_order_refund_money_summary', {
-      p_service_order_id: serviceOrderId,
-    })
+    const { data: moneySummary, error: moneySummaryError } = await auth.supabase.rpc(
+      'get_service_order_refund_money_summary',
+      {
+        p_service_order_id: serviceOrderId,
+      },
+    )
+    if (moneySummaryError) {
+      return NextResponse.json(
+        {
+          error: `Refund money summary unavailable: ${moneySummaryError.message}. Cannot safely refund this booking.`,
+        },
+        { status: 503 },
+      )
+    }
     const summary = (moneySummary || {}) as {
       held_minor?: number
       clawback_cap_minor?: number

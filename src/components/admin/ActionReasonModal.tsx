@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 type ActionReasonModalProps = {
   open: boolean
@@ -30,11 +30,16 @@ export function ActionReasonModal({
   const defaultCategory = useMemo(() => categoryOptions[0]?.value ?? '', [categoryOptions])
   const [category, setCategory] = useState(defaultCategory)
   const [reason, setReason] = useState('')
+  const [localError, setLocalError] = useState<string | null>(null)
+  const wasOpen = useRef(false)
 
   useEffect(() => {
-    if (!open) return
-    setCategory(defaultCategory)
-    setReason('')
+    if (open && !wasOpen.current) {
+      setCategory(defaultCategory)
+      setReason('')
+      setLocalError(null)
+    }
+    wasOpen.current = open
   }, [open, defaultCategory])
 
   if (!open) return null
@@ -87,6 +92,12 @@ export function ActionReasonModal({
             />
             <p className="mt-1 text-right text-[10px] text-gray-400">{reason.trim().length}/500</p>
           </div>
+
+          {localError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {localError}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4">
@@ -101,7 +112,16 @@ export function ActionReasonModal({
           <button
             type="button"
             disabled={!canSubmit}
-            onClick={() => onSubmit({ category, reason: reason.trim() })}
+            onClick={() => {
+              void (async () => {
+                setLocalError(null)
+                try {
+                  await onSubmit({ category, reason: reason.trim() })
+                } catch (err) {
+                  setLocalError(err instanceof Error ? err.message : 'Action failed. Try again.')
+                }
+              })()
+            }}
             className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? 'Submitting...' : 'Confirm Action'}
