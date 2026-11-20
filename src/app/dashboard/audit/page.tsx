@@ -12,18 +12,22 @@ import { DataTable, DataTableHeader, DataTableBody, DataTableRow, DataTableHead,
 import { Search, Download, Loader2 } from 'lucide-react'
 import type { AdminAuditLog } from '../../../types/admin'
 
-const ACTION_TYPES = [
+const KNOWN_ACTION_TYPES = [
   'SYSTEM_CONFIG_CHANGE',
   'USER_STATUS_CHANGE',
   'KYC_VERIFICATION',
   'BUSINESS_KYC_VERIFICATION',
   'ORDER_INTERVENTION',
+  'SERVICE_ORDER_INTERVENTION',
+  'BOOKING_FORCE_STATUS_API',
   'DISPUTE_VERDICT',
   'PAYOUT_APPROVE',
   'PAYOUT_REJECT',
   'SUPPORT_REPLY',
   'SUPPORT_RESOLVE',
+  'SUPPORT_TICKET_RESOLVED',
   'BROADCAST_SEND',
+  'BROADCAST_SENT',
   'BANNER_CREATE',
   'BANNER_DELETE',
   'STAFF_INVITE',
@@ -32,7 +36,46 @@ const ACTION_TYPES = [
   'RANKING_EXPERIMENT_CHANGE',
   'RANKING_KILL_SWITCH',
   'FEATURE_FLAG_CHANGE',
+  'PRODUCT_MODERATION',
+  'SPOTLIGHT_MODERATION',
+  'SAFETY_TESTS_RUN',
+  'SEARCH_EMBEDDINGS_RUN',
+  'PAYMENT_INCIDENT_DESK_VIEW',
+  'ANALYTICS_WAREHOUSE_VIEW',
+  'ADS_WAREHOUSE_VIEW',
+  'CONTENT_REPORTS_INBOX_VIEW',
+  'LISTING_CONTENT_INTEGRITY_VIEW',
+  'CHAT_COMMERCE_LINKS_VIEW',
+  'DISPUTE_BOOKING_CHAT_VIEW',
+  'P2P_CHAT_BROWSE',
+  'P2P_CHAT_SEARCH',
+  'P2P_CHAT_TRANSCRIPT_VIEW',
+  'GROUP_CHATS_DESK_VIEW',
 ]
+
+function isViewOnlyAction(actionType: string | null | undefined): boolean {
+  if (!actionType) return false
+  return (
+    actionType.endsWith('_VIEW') ||
+    actionType.endsWith('_BROWSE') ||
+    actionType === 'P2P_CHAT_SEARCH'
+  )
+}
+
+function detailsSummary(details: unknown): string {
+  if (details == null) return '-'
+  if (typeof details === 'string') return details
+  if (typeof details === 'object' && details !== null) {
+    const d = details as Record<string, unknown>
+    if (typeof d.message === 'string' && d.message.trim()) return d.message
+    if (typeof d.reason === 'string' && d.reason.trim()) return d.reason
+  }
+  try {
+    return JSON.stringify(details)
+  } catch {
+    return String(details)
+  }
+}
 
 export default function AuditLogPage() {
   const supabase = useMemo(() => createClient(), [])
@@ -44,7 +87,9 @@ export default function AuditLogPage() {
   const [actionFilter, setActionFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [mutationsOnly, setMutationsOnly] = useState(true)
   const [exporting, setExporting] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const fetchLogs = useCallback(async () => {
     setLoading(true)
@@ -55,8 +100,8 @@ export default function AuditLogPage() {
         .select('*')
         .order('created_at', { ascending: false })
         .limit(500)
-      if (dateFrom) q = q.gte('created_at', dateFrom)
-      if (dateTo) q = q.lte('created_at', dateTo)
+      if (dateFrom) q = q.gte('created_at', `${dateFrom}T00:00:00.000Z`)
+      if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59.999Z`)
       if (actionFilter) q = q.eq('action_type', actionFilter)
       const { data, error } = await q
       if (error) {
@@ -90,14 +135,22 @@ export default function AuditLogPage() {
     fetchLogs()
   }, [fetchLogs])
 
-  const filteredLogs = logs.filter(
-    (l) =>
-      !appliedSearch ||
-      l.admin_email?.toLowerCase().includes(appliedSearch.toLowerCase()) ||
-      l.action_type?.toLowerCase().includes(appliedSearch.toLowerCase()) ||
-      detailsToText(l.details).toLowerCase().includes(appliedSearch.toLowerCase()) ||
-      (l.target_id ?? '').toLowerCase().includes(appliedSearch.toLowerCase())
-  )
+  const actionTypeOptions = useMemo(() => {
+    const fromLogs = logs.map((l) => l.action_type).filter(Boolean) as string[]
+    return Array.from(new Set([...KNOWN_ACTION_TYPES, ...fromLogs])).sort()
+  }, [logs])
+
+  const filteredLogs = logs.filter((l) => {
+    if (mutationsOnly && isViewOnlyAction(l.action_type)) return false
+    if (!appliedSearch) return true
+    const q = appliedSearch.toLowerCase()
+    return (
+      l.admin_email?.toLowerCase().includes(q) ||
+      l.action_type?.toLowerCase().includes(q) ||
+      detailsToText(l.details).toLowerCase().includes(q) ||
+      (l.target_id ?? '').toLowerCase().includes(q)
+    )
+  })
 
   const handleExport = async () => {
     setExporting(true)
@@ -128,7 +181,7 @@ export default function AuditLogPage() {
     <div className="space-y-6">
       <PageHeader
         title="Audit Log"
-        subtitle="All admin actions are recorded here. Filter and export for compliance."
+        subtitle="Compliance trail for admin mutations. Desk page-views are hidden by default."
         actions={
           <Button variant="secondary" size="md" onClick={handleExport} loading={exporting} disabled={exporting}>
             <Download className="h-4 w-4" />
@@ -141,7 +194,7 @@ export default function AuditLogPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex-1 min-w-[200px] flex items-center gap-2">
               <Search className="h-4 w-4 text-[var(--muted)]" />
               <Input
@@ -160,7 +213,7 @@ export default function AuditLogPage() {
               onChange={(e) => setActionFilter(e.target.value)}
             >
               <option value="">All action types</option>
-              {ACTION_TYPES.map((t) => (
+              {actionTypeOptions.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
@@ -178,10 +231,35 @@ export default function AuditLogPage() {
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
             />
-            <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setActionFilter(''); setAppliedSearch(''); setSearch(''); fetchLogs(); }}>
+            <label className="inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--foreground)]">
+              <input
+                type="checkbox"
+                checked={mutationsOnly}
+                onChange={(e) => setMutationsOnly(e.target.checked)}
+                className="rounded border-[var(--border)]"
+              />
+              Mutations only
+            </label>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDateFrom('')
+                setDateTo('')
+                setActionFilter('')
+                setAppliedSearch('')
+                setSearch('')
+                setMutationsOnly(true)
+                void fetchLogs()
+              }}
+            >
               Clear
             </Button>
           </div>
+          <p className="mt-2 text-[11px] text-[var(--muted)]">
+            Showing {filteredLogs.length} of {logs.length} loaded
+            {mutationsOnly ? ' (page views / browse hidden)' : ''}.
+          </p>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
@@ -200,21 +278,48 @@ export default function AuditLogPage() {
                 </DataTableRow>
               </DataTableHeader>
               <DataTableBody>
-                {filteredLogs.map((log) => (
-                  <DataTableRow key={log.id}>
-                    <DataTableCell className="whitespace-nowrap text-xs text-[var(--muted)]">
-                      {new Date(log.created_at).toLocaleString()}
-                    </DataTableCell>
-                    <DataTableCell className="font-medium">{log.admin_email ?? '-'}</DataTableCell>
-                    <DataTableCell>
-                      <StatusBadge tone="neutral" label={log.action_type} />
-                    </DataTableCell>
-                    <DataTableCell className="text-xs text-[var(--muted)]">{log.target_id ?? '-'}</DataTableCell>
-                    <DataTableCell className="max-w-md truncate text-xs">
-                      {log.details == null ? '-' : detailsToText(log.details)}
-                    </DataTableCell>
-                  </DataTableRow>
-                ))}
+                {filteredLogs.map((log) => {
+                  const summary = detailsSummary(log.details)
+                  const raw = detailsToText(log.details)
+                  const expanded = expandedId === log.id
+                  return (
+                    <DataTableRow key={log.id}>
+                      <DataTableCell className="whitespace-nowrap text-xs text-[var(--muted)]">
+                        {new Date(log.created_at).toLocaleString()}
+                      </DataTableCell>
+                      <DataTableCell className="font-medium">
+                        {log.admin_email?.trim() ? log.admin_email : (
+                          <span className="text-[var(--muted)]" title="Writer did not attach admin_email">
+                            —
+                          </span>
+                        )}
+                      </DataTableCell>
+                      <DataTableCell>
+                        <StatusBadge
+                          tone={isViewOnlyAction(log.action_type) ? 'neutral' : 'info'}
+                          label={log.action_type}
+                        />
+                      </DataTableCell>
+                      <DataTableCell className="max-w-[140px] truncate text-xs text-[var(--muted)] font-mono">
+                        {log.target_id ?? '-'}
+                      </DataTableCell>
+                      <DataTableCell className="max-w-md text-xs">
+                        <p className={expanded ? 'whitespace-pre-wrap break-all' : 'truncate'}>
+                          {expanded ? raw || '-' : summary}
+                        </p>
+                        {raw && raw !== summary ? (
+                          <button
+                            type="button"
+                            className="mt-1 text-[10px] font-semibold text-[var(--primary)]"
+                            onClick={() => setExpandedId(expanded ? null : log.id)}
+                          >
+                            {expanded ? 'Hide JSON' : 'Show JSON'}
+                          </button>
+                        ) : null}
+                      </DataTableCell>
+                    </DataTableRow>
+                  )
+                })}
               </DataTableBody>
             </DataTable>
           )}
@@ -222,7 +327,13 @@ export default function AuditLogPage() {
             <div className="p-4">
               <EmptyState
                 title={logs.length === 0 ? 'No audit logs' : 'No matches'}
-                message={logs.length === 0 ? 'No audit logs in this range.' : 'No logs match your search.'}
+                message={
+                  logs.length === 0
+                    ? 'No audit logs in this range.'
+                    : mutationsOnly
+                      ? 'No mutation logs match. Turn off “Mutations only” to include desk views.'
+                      : 'No logs match your search.'
+                }
               />
             </div>
           )}
