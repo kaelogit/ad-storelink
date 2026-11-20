@@ -20,6 +20,7 @@ import {
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import {
   ChartCard,
@@ -98,6 +99,7 @@ export default function AnalyticsWarehousePage() {
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState<number>(30)
   const [backfilling, setBackfilling] = useState(false)
+  const [backfillOpen, setBackfillOpen] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(
     null,
   )
@@ -175,6 +177,7 @@ export default function AnalyticsWarehousePage() {
     const avgDau = n > 0 ? sum('dau') / n : 0
     const d7Rates = chartData.map((r) => r.d7RetentionRate).filter((v) => v > 0)
     const avgD7 = d7Rates.length > 0 ? d7Rates.reduce((a, b) => a + b, 0) / d7Rates.length : null
+    const v2Days = (payload?.series ?? []).filter((r) => Number((r.metrics as { pipe?: { version?: number } })?.pipe?.version) === 2).length
     return {
       avgDau,
       gmv: sum('gmv'),
@@ -186,8 +189,9 @@ export default function AnalyticsWarehousePage() {
       repeatBuyers: sum('repeatBuyers'),
       avgD7,
       daysWithData: n,
+      v2Days,
     }
-  }, [chartData])
+  }, [chartData, payload?.series])
 
   const funnelSteps = useMemo(() => {
     const steps = onboarding?.steps
@@ -216,23 +220,44 @@ export default function AnalyticsWarehousePage() {
   const topSellers = latest?.topSellers ?? []
   const topCategories = latest?.topCategories ?? []
 
-  const runBackfill = async () => {
+  const runBackfill = async (payload: { category: string; reason: string }) => {
     setBackfilling(true)
-    setFeedback({ tone: 'info', message: `Backfilling last ${days} days…` })
+    setBackfillOpen(false)
+    let offset = 0
+    let totalRows = 0
+    const chunk = 10
     try {
-      const response = await fetch('/api/admin/analytics/backfill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days, reason: '[analytics_upgrade] fill warehouse v2' }),
-      })
-      if (!response.ok) {
-        setFeedback({ tone: 'error', message: await parseApiError(response, 'Backfill failed.') })
-        return
+      while (true) {
+        setFeedback({
+          tone: 'info',
+          message: `Backfilling v2 metrics… ${Math.min(offset, days)}/${days} days`,
+        })
+        const response = await fetch('/api/admin/analytics/backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            days,
+            offset,
+            limit: chunk,
+            reason: `[${payload.category}] ${payload.reason}`.slice(0, 500),
+          }),
+        })
+        if (!response.ok) {
+          setFeedback({ tone: 'error', message: await parseApiError(response, 'Backfill failed.') })
+          return
+        }
+        const data = (await response.json()) as {
+          done?: boolean
+          nextOffset?: number
+          rowsWritten?: number
+        }
+        totalRows += Number(data.rowsWritten ?? 0)
+        offset = Number(data.nextOffset ?? offset + chunk)
+        if (data.done || offset >= days) break
       }
-      const data = (await response.json()) as { days?: number; rowsWritten?: number }
       setFeedback({
         tone: 'success',
-        message: `Backfill done: ${data.days ?? days} days, ${data.rowsWritten ?? '—'} rows.`,
+        message: `Backfill done for ${days}d (${totalRows} country-rows written).`,
       })
       await load()
     } finally {
@@ -274,7 +299,7 @@ export default function AnalyticsWarehousePage() {
               </button>
               <button
                 type="button"
-                onClick={() => void runBackfill()}
+                onClick={() => setBackfillOpen(true)}
                 disabled={backfilling || loading}
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-800 hover:underline disabled:opacity-50"
               >
@@ -296,6 +321,21 @@ export default function AnalyticsWarehousePage() {
       />
 
       {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
+
+      <ActionReasonModal
+        open={backfillOpen}
+        title={`Backfill analytics (${days}d)?`}
+        description="Recomputes daily warehouse rows with v2 metrics (dual GMV, funnels, tops, retention). Runs in chunks so it won’t time out."
+        impactSummary="Existing snapshot rows for the window are overwritten. Cron at 01:15 UTC continues afterward."
+        categoryOptions={[
+          { value: 'analytics_upgrade', label: 'Analytics upgrade / fill history' },
+          { value: 'data_repair', label: 'Data repair' },
+          { value: 'pre_deploy', label: 'Pre-deploy check' },
+        ]}
+        submitting={backfilling}
+        onClose={() => setBackfillOpen(false)}
+        onSubmit={runBackfill}
+      />
 
       {isGlobalView && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">
@@ -340,7 +380,14 @@ export default function AnalyticsWarehousePage() {
               Window <span className="font-semibold text-gray-700">{rangeLabel}</span>
               {rangeKpis.daysWithData > 0 ? ` · ${rangeKpis.daysWithData} days` : ''} · latest snapshot{' '}
               <span className="font-semibold text-gray-700">{latestDayLabel}</span>
-              {latest.currencyCode ? ` · ${latest.currencyCode}` : ''}.
+              {latest.currencyCode ? ` · ${latest.currencyCode}` : ''}
+              {rangeKpis.daysWithData > 0 && rangeKpis.v2Days < rangeKpis.daysWithData ? (
+                <>
+                  {' '}
+                  · <span className="font-semibold text-amber-700">v2 coverage {rangeKpis.v2Days}/{rangeKpis.daysWithData} — run Backfill</span>
+                </>
+              ) : null}
+              .
             </p>
           ) : null}
 
@@ -396,7 +443,16 @@ export default function AnalyticsWarehousePage() {
           </div>
 
           <p className="text-[10px] text-gray-400">
-            Overview-aligned completed GMV ({rangeLabel}): {moneyLabel(isGlobalView ? null : rangeKpis.gmvCompleted)} ·
+            Overview-aligned product completed GMV ({rangeLabel}):{' '}
+            {moneyLabel(
+              isGlobalView
+                ? null
+                : (payload?.series ?? []).reduce(
+                    (acc, row) => acc + Number(row.metrics?.productGmvCompleted ?? 0),
+                    0,
+                  ),
+            )}{' '}
+            ·
             First-time buyers (product+service): {formatCount(rangeKpis.firstOrderBuyers)} · Repeat buyers:{' '}
             {formatCount(rangeKpis.repeatBuyers)} · Avg D7 retention:{' '}
             {rangeKpis.avgD7 == null ? '—' : formatPct(rangeKpis.avgD7)} · Same-day signup→first purchase (latest):{' '}
