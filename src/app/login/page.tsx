@@ -41,7 +41,7 @@ export default function LoginPage() {
         }),
       })
       if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem('storelink.admin.sessionHeartbeat.v1', '1')
+        sessionStorage.setItem('storelink.admin.sessionHeartbeat.v2', '1')
       }
     } catch {
       /* dashboard heartbeat will retry */

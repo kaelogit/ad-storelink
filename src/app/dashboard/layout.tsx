@@ -246,9 +246,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Ensure Super Admin → Sessions has a row even if login-time record-login raced or failed.
   useEffect(() => {
     if (!userRole || typeof window === 'undefined') return
-    const key = 'storelink.admin.sessionHeartbeat.v1'
+    const key = 'storelink.admin.sessionHeartbeat.v2'
     if (sessionStorage.getItem(key) === '1') return
-    sessionStorage.setItem(key, '1')
     void fetch('/api/admin/record-login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -256,7 +255,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         heartbeat: true,
         device_info: navigator.userAgent,
       }),
-    }).catch(() => {})
+    })
+      .then(async (res) => {
+        if (!res.ok) return
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null
+        if (payload?.ok) sessionStorage.setItem(key, '1')
+      })
+      .catch(() => {})
   }, [userRole])
 
   useEffect(() => {
@@ -290,6 +295,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [pathname])
 
   const handleSignOut = async () => {
+    try {
+      sessionStorage.removeItem('storelink.admin.sessionHeartbeat.v1')
+      sessionStorage.removeItem('storelink.admin.sessionHeartbeat.v2')
+    } catch {
+      /* ignore */
+    }
     await supabase.auth.signOut()
     router.push('/login')
   }

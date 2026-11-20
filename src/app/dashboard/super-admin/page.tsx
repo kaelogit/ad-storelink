@@ -110,6 +110,8 @@ export default function SuperAdminPage() {
   } | null>(null)
   const [pendingSession, setPendingSession] = useState<AdminSession | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [sessionsSetupHint, setSessionsSetupHint] = useState<string | null>(null)
+  const [recordingSession, setRecordingSession] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -130,10 +132,16 @@ export default function SuperAdminPage() {
 
     if (activeTab === 'sessions') {
       setSessionsLoading(true)
+      setSessionsSetupHint(null)
       const response = await fetch('/api/admin/staff/sessions')
       if (response.ok) {
-        const payload = (await response.json()) as { sessions: AdminSession[] }
+        const payload = (await response.json()) as {
+          sessions: AdminSession[]
+          setupRequired?: boolean
+          error?: string
+        }
         setSessions(payload.sessions ?? [])
+        if (payload.setupRequired && payload.error) setSessionsSetupHint(payload.error)
       } else {
         const message = await parseApiError(response, 'Failed to load sessions.')
         setFeedback({ tone: 'error', message })
@@ -207,6 +215,44 @@ export default function SuperAdminPage() {
       message: `Session revoked for ${current.admin_email ?? 'admin'}.`,
     })
     loadData()
+  }
+
+  const recordMySession = async () => {
+    setRecordingSession(true)
+    setFeedback({ tone: 'info', message: 'Recording this browser session…' })
+    try {
+      const response = await fetch('/api/admin/record-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_info: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+        }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean
+        sessionAction?: string
+        sessionError?: string | null
+      }
+      if (!response.ok || payload.ok === false) {
+        setFeedback({
+          tone: 'error',
+          message: payload.sessionError || (await parseApiError(response, 'Failed to record session.')),
+        })
+        return
+      }
+      try {
+        sessionStorage.setItem('storelink.admin.sessionHeartbeat.v2', '1')
+      } catch {
+        /* ignore */
+      }
+      setFeedback({
+        tone: 'success',
+        message: `Session ${payload.sessionAction === 'refreshed' ? 'refreshed' : 'recorded'} for this browser.`,
+      })
+      await loadData()
+    } finally {
+      setRecordingSession(false)
+    }
   }
 
   const requestSecurityReset = (id: string, email: string) => {
@@ -448,9 +494,25 @@ export default function SuperAdminPage() {
         </>
       ) : activeTab === 'sessions' ? (
         <div className="space-y-4">
-          <p className="text-xs text-gray-500">
-            Live view of active admin sessions across devices. Revoke sessions that look suspicious or belong to suspended staff.
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-gray-500">
+              Live view of active admin sessions across devices — including your own. Revoke anything suspicious.
+            </p>
+            <button
+              type="button"
+              onClick={() => void recordMySession()}
+              disabled={recordingSession}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {recordingSession ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+              Record my session
+            </button>
+          </div>
+          {sessionsSetupHint ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {sessionsSetupHint}
+            </p>
+          ) : null}
           {sessionsLoading ? (
             <div className="flex h-64 items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
@@ -459,7 +521,7 @@ export default function SuperAdminPage() {
             <EmptyState
               icon={Activity}
               title="No active sessions"
-              message="Sessions appear here after staff sign in. Use Force Security Reset on the Staff List to revoke all devices for one person."
+              message="Click Record my session above (works for super admin too), or sign out and back in after deploy."
             />
           ) : (
             <DataTable>

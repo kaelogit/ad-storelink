@@ -101,16 +101,26 @@ export async function POST(request: Request) {
         sessionAction = 'refreshed'
       }
     } else {
-      const { data: inserted, error: insertError } = await auth.supabase
-        .from('admin_sessions')
-        .insert({
-          admin_id: auth.userId,
-          device_info: deviceInfo,
-          ip,
-          last_activity: now,
-        })
-        .select('id')
-        .maybeSingle()
+      const attemptInsert = async (withIp: boolean) =>
+        auth.supabase
+          .from('admin_sessions')
+          .insert({
+            admin_id: auth.userId,
+            device_info: deviceInfo,
+            ...(withIp && ip ? { ip } : {}),
+            last_activity: now,
+          })
+          .select('id')
+          .maybeSingle()
+
+      let { data: inserted, error: insertError } = await attemptInsert(true)
+
+      // Retry without IP if inet/proxy casting still rejects the value.
+      if (insertError && ip) {
+        const retry = await attemptInsert(false)
+        inserted = retry.data
+        insertError = retry.error
+      }
 
       if (insertError) {
         sessionAction = 'failed'
