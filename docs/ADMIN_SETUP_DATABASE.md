@@ -1,4 +1,4 @@
-# Admin panel – database setup
+# Admin panel - database setup
 
 The admin panel (admin-storelink) uses the **same Supabase project** as the main app. These migrations must be applied to that project so Super Admin and session features work.
 
@@ -17,8 +17,13 @@ Run these in the **Supabase SQL Editor** (or via `supabase db push` from the rep
    - Adds `last_login` and `last_login_ip` to `admin_users` (shown in Staff list).  
    - Allows admins to update their own row (used by the record-login API).
 
+3. **`admin_sessions.ip` as text**  
+   File: `store-link-mobile/supabase/migrations/20261120180000_admin_sessions_ip_text.sql`  
+   - Changes `ip` from `inet` to `text` so proxy / IPv6 values do not fail inserts (symptom: Staff shows last login, Sessions stays empty).
+
 ## After running
 
 - **Staff list** “Session Info” will show last login date and IP after each admin signs in.
-- **Sessions** tab will list active admin sessions; new logins are recorded automatically.
+- **Sessions** tab will list active admin sessions; new logins (and a one-shot dashboard heartbeat) are recorded automatically.
 - If you see “Could not find the table 'public.admin_sessions'”, run migration (1) above.
+- If Staff shows IP but Sessions is empty, run migration (3).

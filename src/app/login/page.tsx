@@ -31,14 +31,21 @@ export default function LoginPage() {
       return
     }
 
-    // 2. Record login for Staff/Sessions (last_login, admin_sessions); don't block redirect
-    fetch('/api/admin/record-login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_info: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-      }),
-    }).catch(() => {})
+    // 2. Record login for Staff/Sessions (await so cookies + session row land before nav)
+    try {
+      await fetch('/api/admin/record-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_info: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+        }),
+      })
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('storelink.admin.sessionHeartbeat.v1', '1')
+      }
+    } catch {
+      /* dashboard heartbeat will retry */
+    }
 
     // 3. Redirect to Dashboard
     router.push('/dashboard')

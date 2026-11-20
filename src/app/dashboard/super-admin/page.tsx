@@ -41,15 +41,42 @@ type AdminSession = {
   created_at: string
 }
 
-function detailsToText(details: unknown): string {
+function detailsToSummary(details: unknown): string {
   if (details == null) return ''
-  if (typeof details === 'string') return details
+  if (typeof details === 'string') return details.slice(0, 180)
   if (typeof details === 'number' || typeof details === 'boolean') return String(details)
+  if (typeof details !== 'object') return ''
+
+  const d = details as Record<string, unknown>
+  const parts: string[] = []
+  if (typeof d.message === 'string' && d.message.trim()) parts.push(d.message.trim())
+  if (typeof d.reason === 'string' && d.reason.trim()) parts.push(d.reason.trim())
+  if (typeof d.status === 'string') parts.push(`status=${d.status}`)
+  if (typeof d.surface === 'string') parts.push(`surface=${d.surface}`)
+  if (typeof d.policyType === 'string') parts.push(`policy=${d.policyType}`)
+  if (typeof d.countryCode === 'string') parts.push(d.countryCode)
+  if (typeof d.staffEmail === 'string') parts.push(d.staffEmail)
+  if (typeof d.revokedCount === 'number') parts.push(`revoked=${d.revokedCount}`)
+  if (typeof d.sessionsRevoked === 'number') parts.push(`sessions=${d.sessionsRevoked}`)
+  if (typeof d.passed === 'number' || typeof d.failed === 'number') {
+    parts.push(`passed=${d.passed ?? 0}/${(Number(d.passed) || 0) + (Number(d.failed) || 0)}`)
+  }
+  if (typeof d.maintenance_mode === 'boolean') {
+    parts.push(`maintenance=${d.maintenance_mode ? 'on' : 'off'}`)
+  }
+  if (parts.length > 0) return parts.join(' · ').slice(0, 220)
+
   try {
-    return JSON.stringify(details)
+    const raw = JSON.stringify(details)
+    return raw.length > 160 ? `${raw.slice(0, 160)}…` : raw
   } catch {
     return ''
   }
+}
+
+function isViewOnlyAuditAction(actionType: string | null | undefined): boolean {
+  if (!actionType) return false
+  return actionType.endsWith('_VIEW') || actionType.endsWith('_BROWSE') || actionType.endsWith('_SEARCH')
 }
 
 export default function SuperAdminPage() {
@@ -63,6 +90,7 @@ export default function SuperAdminPage() {
   const [loading, setLoading] = useState(true)
   const [isInviteOpen, setIsInviteOpen] = useState(false)
   const [auditSearchInput, setAuditSearchInput] = useState('')
+  const [auditHideViews, setAuditHideViews] = useState(true)
 
   // Form States
   const [email, setEmail] = useState('')
@@ -497,11 +525,11 @@ export default function SuperAdminPage() {
           )}
         </div>
       ) : (
-        /* 🕵️‍♂️ AUDIT LOG VIEW (staff-scoped quick view) */
+        /* Staff quick audit (readable summaries; full desk for compliance filters) */
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-gray-500">
-              Recent staff and security actions (last 100). For full platform mutations, open the Audit Log desk.
+              Recent mutations (last 100). View-only desk opens are hidden by default. Full filters live on Audit Log.
             </p>
             <Link
               href="/dashboard/audit"
@@ -511,13 +539,13 @@ export default function SuperAdminPage() {
             </Link>
           </div>
           <form
-            className="flex gap-4 items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"
+            className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"
             onSubmit={(e) => {
               e.preventDefault()
               setAuditFilterQ(auditSearchInput)
             }}
           >
-            <div className="flex-1 relative">
+            <div className="flex-1 min-w-[200px] relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
               <input
                 type="text"
@@ -528,6 +556,15 @@ export default function SuperAdminPage() {
                 onBlur={() => setAuditFilterQ(auditSearchInput)}
               />
             </div>
+            <label className="flex items-center gap-2 text-xs text-gray-600 select-none">
+              <input
+                type="checkbox"
+                checked={auditHideViews}
+                onChange={(e) => setAuditHideViews(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              Hide view-only
+            </label>
             <button
               type="submit"
               className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-black transition"
@@ -537,11 +574,16 @@ export default function SuperAdminPage() {
           </form>
 
           {(() => {
-            const filteredLogs = logs.filter(
-              (l) =>
-                l.admin_email?.toLowerCase().includes(auditFilterQ.toLowerCase()) ||
-                l.action_type?.toLowerCase().includes(auditFilterQ.toLowerCase())
-            )
+            const q = auditFilterQ.trim().toLowerCase()
+            const filteredLogs = logs.filter((l) => {
+              if (auditHideViews && isViewOnlyAuditAction(l.action_type)) return false
+              if (!q) return true
+              return (
+                (l.admin_email ?? '').toLowerCase().includes(q) ||
+                (l.action_type ?? '').toLowerCase().includes(q) ||
+                detailsToSummary(l.details).toLowerCase().includes(q)
+              )
+            })
             return (
               <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
@@ -560,13 +602,17 @@ export default function SuperAdminPage() {
                           <td className="px-6 py-4 text-gray-400 whitespace-nowrap text-xs">
                             {new Date(log.created_at).toLocaleString()}
                           </td>
-                          <td className="px-6 py-4 font-semibold text-gray-700">{log.admin_email}</td>
+                          <td className="px-6 py-4 font-semibold text-gray-700">
+                            {log.admin_email || '—'}
+                          </td>
                           <td className="px-6 py-4">
                             <span className="px-2 py-0.5 rounded bg-gray-100 text-[9px] font-black uppercase tracking-tighter border border-gray-200">
                               {log.action_type}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-gray-600 text-xs">{detailsToText(log.details)}</td>
+                          <td className="px-6 py-4 text-gray-600 text-xs max-w-md">
+                            {detailsToSummary(log.details)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -574,12 +620,12 @@ export default function SuperAdminPage() {
                 </div>
                 {logs.length === 0 && (
                   <div className="p-12 text-center text-gray-400">
-                    The Black Box is currently empty. All actions will be recorded here.
+                    No audit entries yet.
                   </div>
                 )}
                 {logs.length > 0 && filteredLogs.length === 0 && (
                   <div className="p-12 text-center text-gray-400">
-                    No audit logs match your filter. Try a different search.
+                    No audit logs match this filter. Uncheck “Hide view-only” or clear search.
                   </div>
                 )}
               </div>

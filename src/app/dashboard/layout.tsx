@@ -243,6 +243,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     void getUserRole()
   }, [])
 
+  // Ensure Super Admin → Sessions has a row even if login-time record-login raced or failed.
+  useEffect(() => {
+    if (!userRole || typeof window === 'undefined') return
+    const key = 'storelink.admin.sessionHeartbeat.v1'
+    if (sessionStorage.getItem(key) === '1') return
+    sessionStorage.setItem(key, '1')
+    void fetch('/api/admin/record-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        heartbeat: true,
+        device_info: navigator.userAgent,
+      }),
+    }).catch(() => {})
+  }, [userRole])
+
   useEffect(() => {
     let cancelled = false
     const loadBadges = async () => {
