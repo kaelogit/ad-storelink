@@ -136,11 +136,26 @@ export default function SystemSettings() {
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
+      <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs text-blue-900">
+        <p className="font-semibold">How this connects</p>
+        <ul className="mt-1.5 list-disc space-y-1 pl-4 text-blue-900/90">
+          <li>
+            <strong>Maintenance</strong> → mobile full-screen + storelink.ng gate (same <code className="font-mono">app_settings</code> row).
+          </li>
+          <li>
+            <strong>Min version / store releases</strong> → mobile only (App Upgrade screen). Web does not version-gate browsers.
+          </li>
+          <li>
+            <strong>Support phone</strong> → shown on the maintenance screens when set.
+          </li>
+        </ul>
+      </div>
+
       <ConfirmActionModal
         open={showMaintenanceConfirm}
         title="Enable maintenance mode?"
-        description="You are about to lock the app for all users. Only admins will be able to access the platform until you turn it off."
-        impactSummary="All users will see an “Under maintenance” screen and cannot use the app."
+        description="You are about to lock StoreLink for all mobile app users until you turn this off. There is no in-app admin bypass — keep this admin desk open in another tab."
+        impactSummary="Mobile shows System Maintenance full-screen. Web marketing can show the same gate. Turn off here to restore access."
         danger
         confirmLabel="Lock app"
         submitting={saving}
@@ -160,7 +175,7 @@ export default function SystemSettings() {
               </div>
               <div>
                 <h3 className="text-base font-semibold text-[var(--foreground)]">Maintenance mode</h3>
-                <p className="text-xs text-[var(--muted)]">Lock the app for all non-admin users.</p>
+                <p className="text-xs text-[var(--muted)]">Lock the mobile app (and web when gated) for everyone.</p>
               </div>
             </div>
             <button

@@ -46,22 +46,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid settings payload' }, { status: 400 })
   }
 
-  const { error } = await auth.supabase
-    .from('app_settings')
-    .update({
-      maintenance_mode: body.maintenance_mode,
-      min_version_ios: body.min_version_ios,
-      min_version_android: body.min_version_android,
-      latest_version_ios: body.latest_version_ios,
-      latest_version_android: body.latest_version_android,
-      update_policy_ios: body.update_policy_ios,
-      update_policy_android: body.update_policy_android,
-      release_notes: body.release_notes,
-      store_url_ios: body.store_url_ios,
-      store_url_android: body.store_url_android,
-      support_phone: body.support_phone,
-    })
-    .eq('id', 1)
+  const row = {
+    id: 1,
+    maintenance_mode: body.maintenance_mode,
+    min_version_ios: body.min_version_ios,
+    min_version_android: body.min_version_android,
+    latest_version_ios: body.latest_version_ios,
+    latest_version_android: body.latest_version_android,
+    update_policy_ios: body.update_policy_ios,
+    update_policy_android: body.update_policy_android,
+    release_notes: body.release_notes,
+    store_url_ios: body.store_url_ios,
+    store_url_android: body.store_url_android,
+    support_phone: body.support_phone,
+  }
+
+  const { error } = await auth.supabase.from('app_settings').upsert(row, { onConflict: 'id' })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 })
