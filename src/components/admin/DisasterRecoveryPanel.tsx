@@ -12,14 +12,15 @@ function severityClass(sev: string) {
 }
 
 type IncidentSummary = {
-  awaitingPaymentCount?: number
-  thresholdBreached?: boolean
-  openIncidentCount?: number
+  stuckOrdersCount: number
+  webhookErrorsInAlertWindow: number
+  alertTriggered: boolean
 }
 
 /**
- * Overview disaster recovery — static runbooks, collapsed unless live signals fire.
+ * Overview disaster recovery - static runbooks, collapsed unless live signals fire.
  * These cards are NOT live outages; they are playbooks.
+ * Live keys match get_admin_payment_incident_dashboard / Payment Incidents desk.
  */
 export function DisasterRecoveryPanel() {
   const [open, setOpen] = useState(false)
@@ -34,18 +35,18 @@ export function DisasterRecoveryPanel() {
         const data = await res.json()
         const s = (data?.summary || data || {}) as Record<string, unknown>
         const next: IncidentSummary = {
-          awaitingPaymentCount: Number(
-            s.awaiting_payment_count ?? s.awaitingPaymentCount ?? s.stuck_count ?? 0,
+          stuckOrdersCount: Number(s.stuckOrdersCount ?? s.stuck_orders_count ?? 0),
+          webhookErrorsInAlertWindow: Number(
+            s.webhookErrorsInAlertWindow ?? s.webhook_errors_in_alert_window ?? 0,
           ),
-          thresholdBreached: Boolean(s.threshold_breached ?? s.thresholdBreached),
-          openIncidentCount: Number(s.open_incident_count ?? s.openIncidentCount ?? 0),
+          alertTriggered: Boolean(s.alertTriggered ?? s.alert_triggered),
         }
         if (!cancelled) {
           setSummary(next)
           if (
-            next.thresholdBreached ||
-            (next.awaitingPaymentCount ?? 0) > 0 ||
-            (next.openIncidentCount ?? 0) > 0
+            next.alertTriggered ||
+            next.stuckOrdersCount > 0 ||
+            next.webhookErrorsInAlertWindow > 0
           ) {
             setOpen(true)
           }
@@ -60,9 +61,9 @@ export function DisasterRecoveryPanel() {
   }, [])
 
   const live =
-    summary?.thresholdBreached ||
-    (summary?.awaitingPaymentCount ?? 0) > 0 ||
-    (summary?.openIncidentCount ?? 0) > 0
+    Boolean(summary?.alertTriggered) ||
+    (summary?.stuckOrdersCount ?? 0) > 0 ||
+    (summary?.webhookErrorsInAlertWindow ?? 0) > 0
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-3">
@@ -77,7 +78,7 @@ export function DisasterRecoveryPanel() {
             <h3 className="text-sm font-black text-gray-900">Disaster recovery runbooks</h3>
             <p className="mt-0.5 text-xs text-gray-500">
               {live
-                ? 'Payment signals look elevated — open a playbook if you are actively remediating.'
+                ? 'Payment signals look elevated. Open a playbook if you are actively remediating.'
                 : 'Not a live alert. Collapsed playbooks for Paystack / webhook / payout failures.'}
             </p>
           </div>

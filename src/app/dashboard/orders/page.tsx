@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { parseApiError } from '../../../utils/http'
 import { DisputeChatTranscriptPanel } from '../../../components/admin/DisputeChatTranscriptPanel'
@@ -105,6 +107,8 @@ const PAID_LIKE = new Set(['PAID', 'SHIPPED', 'COMPLETED', 'DISPUTED'])
 export default function OrderOps() {
   const supabase = createClient()
   const { countryCode } = useCountryFilter()
+  const searchParams = useSearchParams()
+  const deepLinkHandled = useRef<string | null>(null)
   const [query, setQuery] = useState('')
   const [order, setOrder] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -112,6 +116,7 @@ export default function OrderOps() {
   const [pendingStatus, setPendingStatus] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
   const [markPaidRef, setMarkPaidRef] = useState('')
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
+  const [markPaidConfirmOpen, setMarkPaidConfirmOpen] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [activeTab, setActiveTab] = useState<'list' | 'lookup'>('list')
   const [list, setList] = useState<OrderListRow[]>([])
@@ -152,8 +157,10 @@ export default function OrderOps() {
     setOrder(null)
     setActiveTab('lookup')
     setQuery(q)
-    const { data } = await supabase.rpc('get_order_details', { p_query: q })
-    if (data) {
+    const { data, error } = await supabase.rpc('get_order_details', { p_query: q })
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Order lookup failed.' })
+    } else if (data) {
       const enriched = await enrichOrderWithCoinOps(data)
       setOrder(enriched)
     } else {
@@ -166,6 +173,15 @@ export default function OrderOps() {
     e.preventDefault()
     await openOrderByQuery(query)
   }
+
+  useEffect(() => {
+    const qParam = (searchParams.get('q') || searchParams.get('orderId') || '').trim()
+    if (!qParam) return
+    if (deepLinkHandled.current === qParam) return
+    deepLinkHandled.current = qParam
+    void openOrderByQuery(qParam)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deep-link once per q value
+  }, [searchParams])
 
   const loadList = useCallback(async () => {
     setListLoading(true)
@@ -796,7 +812,7 @@ export default function OrderOps() {
                         <button
                           type="button"
                           disabled={!markPaidRef.trim() || markPaidLoading}
-                          onClick={markOrderPaidByReference}
+                          onClick={() => setMarkPaidConfirmOpen(true)}
                           className="bg-amber-600 text-white font-bold px-3 py-2 rounded-lg text-xs hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2"
                         >
                           {markPaidLoading ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -867,6 +883,19 @@ export default function OrderOps() {
         </>
       )}
 
+      <ConfirmActionModal
+        open={markPaidConfirmOpen}
+        title="Mark this order paid?"
+        description={`Reconcile with Paystack reference ${markPaidRef.trim() || '(missing)'}. Only use when payment is confirmed outside the normal webhook.`}
+        impactSummary="Order moves out of AWAITING_PAYMENT and escrow/fulfillment paths unlock."
+        confirmLabel="Mark paid"
+        submitting={markPaidLoading}
+        onClose={() => setMarkPaidConfirmOpen(false)}
+        onConfirm={async () => {
+          await markOrderPaidByReference()
+          setMarkPaidConfirmOpen(false)
+        }}
+      />
       <ActionReasonModal
         open={pendingStatus !== null}
         title={pendingStatus === 'COMPLETED' ? 'Confirm Force Complete' : 'Confirm Force Cancel'}

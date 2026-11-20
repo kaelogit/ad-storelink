@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { createClient } from '../../../utils/supabase/client'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
-import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
+import { ALL_COUNTRIES_CODE, currencyForCountryCode } from '../../../constants/SupportedCountries'
+import { formatMoney } from '../../../components/admin/charts/format'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
@@ -46,9 +47,13 @@ export default function UserManagement() {
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [pendingAccountStatus, setPendingAccountStatus] = useState<'suspended' | 'active' | 'disabled' | 'banned' | null>(null)
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
+  /** Matches account-status API write roles. */
+  const canChangeAccountStatus = adminRole === 'super_admin' || adminRole === 'moderator'
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
+    setListError(null)
     const from = (page - 1) * pageSize
     const to = from + pageSize - 1
     let query = supabase
@@ -65,9 +70,15 @@ export default function UserManagement() {
       if (term.includes('-')) orParts.push(`id.eq.${term}`)
       query = query.or(orParts.join(','))
     }
-    const { data, count } = await query
-    if (data) setUsers(data)
-    setTotalCount(count ?? null)
+    const { data, count, error } = await query
+    if (error) {
+      setUsers([])
+      setTotalCount(null)
+      setListError(error.message || 'Failed to load users')
+    } else {
+      setUsers(data || [])
+      setTotalCount(count ?? null)
+    }
     setLoading(false)
   }, [page, q, sort, order, pageSize, countryCode])
 
@@ -99,51 +110,57 @@ export default function UserManagement() {
   const selectUser = async (userId: string) => {
     setDossierLoading(true)
     setDossier(null)
-    const { data } = await supabase.rpc('get_user_dossier', { p_user_id: userId })
-    if (data) {
-      const [{ data: profileData }, { data: subscriptionPayments }, { data: coinLedger }, { data: referralSummary }, { data: sellerSnapshot }, { data: sellerHealth }] = await Promise.all([
-        supabase
-          .from('profiles')
-          .select('coin_balance, currency_code, subscription_plan, subscription_expiry, subscription_status, prestige_weight, is_seller, account_status, disabled_by, disabled_at, scheduled_deletion_at, suspension_reason, banned_at')
-          .eq('id', userId)
-          .maybeSingle(),
-        supabase
-          .from('coin_transactions')
-          .select('id, amount, description, created_at, type')
-          .eq('user_id', userId)
-          .eq('type', 'SUBSCRIPTION_UPGRADE')
-          .order('created_at', { ascending: false })
-          .limit(5),
-        supabase
-          .from('coin_transactions')
-          .select('id, amount, description, created_at, type')
-          .eq('user_id', userId)
-          .neq('type', 'ORDER_PAYMENT')
-          .order('created_at', { ascending: false })
-          .limit(8),
-        supabase.rpc('get_admin_referral_user_summary', { p_user_id: userId }),
-        supabase.rpc('get_admin_seller_analytics_snapshot', { p_user_id: userId }),
-        supabase.rpc('get_admin_seller_health_score', { p_user_id: userId }),
-      ])
-      setDossier({
-        ...data,
-        status: profileData?.account_status || data?.status || 'active',
-        account_status: profileData?.account_status || data?.status || 'active',
-        disabled_by: profileData?.disabled_by ?? null,
-        disabled_at: profileData?.disabled_at ?? null,
-        scheduled_deletion_at: profileData?.scheduled_deletion_at ?? null,
-        suspension_reason: profileData?.suspension_reason ?? null,
-        banned_at: profileData?.banned_at ?? null,
-        coin_balance: Number(profileData?.coin_balance ?? 0),
-        currency_code: profileData?.currency_code || 'NGN',
-        subscription_profile: profileData,
-        subscription_payments: subscriptionPayments ?? [],
-        coin_ledger: coinLedger ?? [],
-        referral_summary: referralSummary ?? null,
-        seller_snapshot: sellerSnapshot ?? null,
-        seller_health: sellerHealth ?? null,
+    const { data, error } = await supabase.rpc('get_user_dossier', { p_user_id: userId })
+    if (error || !data) {
+      setFeedback({
+        tone: 'error',
+        message: error?.message || 'Failed to load user dossier.',
       })
+      setDossierLoading(false)
+      return
     }
+    const [{ data: profileData }, { data: subscriptionPayments }, { data: coinLedger }, { data: referralSummary }, { data: sellerSnapshot }, { data: sellerHealth }] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('coin_balance, currency_code, subscription_plan, subscription_expiry, subscription_status, prestige_weight, is_seller, account_status, disabled_by, disabled_at, scheduled_deletion_at, suspension_reason, banned_at')
+        .eq('id', userId)
+        .maybeSingle(),
+      supabase
+        .from('coin_transactions')
+        .select('id, amount, description, created_at, type')
+        .eq('user_id', userId)
+        .eq('type', 'SUBSCRIPTION_UPGRADE')
+        .order('created_at', { ascending: false })
+        .limit(5),
+      supabase
+        .from('coin_transactions')
+        .select('id, amount, description, created_at, type')
+        .eq('user_id', userId)
+        .neq('type', 'ORDER_PAYMENT')
+        .order('created_at', { ascending: false })
+        .limit(8),
+      supabase.rpc('get_admin_referral_user_summary', { p_user_id: userId }),
+      supabase.rpc('get_admin_seller_analytics_snapshot', { p_user_id: userId }),
+      supabase.rpc('get_admin_seller_health_score', { p_user_id: userId }),
+    ])
+    setDossier({
+      ...data,
+      status: profileData?.account_status || data?.status || 'active',
+      account_status: profileData?.account_status || data?.status || 'active',
+      disabled_by: profileData?.disabled_by ?? null,
+      disabled_at: profileData?.disabled_at ?? null,
+      scheduled_deletion_at: profileData?.scheduled_deletion_at ?? null,
+      suspension_reason: profileData?.suspension_reason ?? null,
+      banned_at: profileData?.banned_at ?? null,
+      coin_balance: Number(profileData?.coin_balance ?? 0),
+      currency_code: profileData?.currency_code || 'NGN',
+      subscription_profile: profileData,
+      subscription_payments: subscriptionPayments ?? [],
+      coin_ledger: coinLedger ?? [],
+      referral_summary: referralSummary ?? null,
+      seller_snapshot: sellerSnapshot ?? null,
+      seller_health: sellerHealth ?? null,
+    })
     setDossierLoading(false)
   }
 
@@ -224,6 +241,11 @@ export default function UserManagement() {
         }
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+      {listError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {listError}
+        </div>
+      ) : null}
 
       <ActionReasonModal
         open={pendingAccountStatus !== null}
@@ -279,14 +301,14 @@ export default function UserManagement() {
             <select value={`${sort}:${order}`} onChange={(e) => { const [s, o] = e.target.value.split(':'); tableState.setSort(s); tableState.setOrder(o as 'asc' | 'desc'); }} className="rounded border border-gray-200 bg-white px-2 py-1 text-gray-700">
               <option value="created_at:desc">Newest first</option>
               <option value="created_at:asc">Oldest first</option>
-              <option value="display_name:asc">Name A–Z</option>
-              <option value="display_name:desc">Name Z–A</option>
-              <option value="email:asc">Email A–Z</option>
-              <option value="email:desc">Email Z–A</option>
+              <option value="display_name:asc">Name A-Z</option>
+              <option value="display_name:desc">Name Z-A</option>
+              <option value="email:asc">Email A-Z</option>
+              <option value="email:desc">Email Z-A</option>
             </select>
           </label>
           {totalCount != null && (
-            <span className="text-gray-500">{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalCount)} of {totalCount}</span>
+            <span className="text-gray-500">{(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalCount)} of {totalCount}</span>
           )}
           <div className="flex items-center gap-1">
             <button type="button" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)} className="p-1.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none"><ChevronLeft className="h-4 w-4" /></button>
@@ -441,20 +463,39 @@ export default function UserManagement() {
                         {/* Financials */}
                         <div className="space-y-3">
                             <h4 className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-2"><Wallet size={12}/> Financials</h4>
-                            <DossierStat icon={Wallet} label="Wallet Balance" value={`₦${dossier.wallet_balance}`} color="blue" />
+                            <DossierStat
+                              icon={Wallet}
+                              label="Wallet Balance"
+                              value={formatMoney(
+                                Number(dossier.wallet_balance || 0),
+                                String(dossier.currency_code || currencyForCountryCode(countryCode)),
+                              )}
+                              color="blue"
+                            />
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="bg-gray-50 p-3 rounded-lg text-center">
                                     <p className="text-[9px] text-gray-400 uppercase">Total Earned</p>
-                                    <p className="text-xs font-bold text-gray-900">₦{dossier.total_earned}</p>
+                                    <p className="text-xs font-bold text-gray-900">
+                                      {formatMoney(
+                                        Number(dossier.total_earned || 0),
+                                        String(dossier.currency_code || currencyForCountryCode(countryCode)),
+                                      )}
+                                    </p>
                                 </div>
                                 <div className="bg-gray-50 p-3 rounded-lg text-center">
                                     <p className="text-[9px] text-gray-400 uppercase">Total Spent</p>
-                                    <p className="text-xs font-bold text-gray-900">₦{dossier.total_spent}</p>
+                                    <p className="text-xs font-bold text-gray-900">
+                                      {formatMoney(
+                                        Number(dossier.total_spent || 0),
+                                        String(dossier.currency_code || currencyForCountryCode(countryCode)),
+                                      )}
+                                    </p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Actions */}
+                        {/* Actions — account-status API is super_admin | moderator only */}
+                        {canChangeAccountStatus ? (
                         <div className="pt-4 space-y-2">
                             {dossier.status === 'active' ? (
                               <button
@@ -514,6 +555,11 @@ export default function UserManagement() {
                               </button>
                             ) : null}
                         </div>
+                        ) : (
+                          <p className="pt-4 text-[11px] text-gray-400">
+                            Account freeze / disable / ban requires moderator or super admin.
+                          </p>
+                        )}
                     </div>
                 </div>
             ) : (

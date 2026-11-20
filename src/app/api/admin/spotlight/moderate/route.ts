@@ -3,7 +3,7 @@ import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
 
 type ModerateSpotlightPayload = {
   spotlightPostId?: string
-  action?: 'hide' | 'remove' | 'reinstate'
+  action?: 'hide' | 'remove' | 'reinstate' | 'dismiss'
   reasonCategory?: string
   reason?: string
   reportId?: string | null
@@ -29,8 +29,11 @@ export async function POST(request: Request) {
     )
   }
 
-  if (!['hide', 'remove', 'reinstate'].includes(action)) {
+  if (!['hide', 'remove', 'reinstate', 'dismiss'].includes(action)) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
+  }
+  if (action === 'dismiss' && !reportId) {
+    return NextResponse.json({ error: 'reportId is required for dismiss' }, { status: 400 })
   }
 
   if (reason.length < 10) {

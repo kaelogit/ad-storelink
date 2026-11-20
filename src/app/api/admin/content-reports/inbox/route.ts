@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
 
 export async function GET(request: Request) {
-  const auth = await getApiAdminContext(['super_admin', 'moderator', 'support', 'analyst'])
+  // Match adminNavigation Report Inbox roles (includes content).
+  const auth = await getApiAdminContext(['super_admin', 'moderator', 'support', 'analyst', 'content'])
   if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status })
   }

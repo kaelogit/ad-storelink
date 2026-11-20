@@ -30,7 +30,7 @@ function ymdLocal(d: Date) {
   return `${y}-${m}-${day}`
 }
 
-export function AnnouncementsCalendarPanel() {
+export function AnnouncementsCalendarPanel({ canWrite = true }: { canWrite?: boolean } = {}) {
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()))
   const [rows, setRows] = useState<Announcement[]>([])
   const [loading, setLoading] = useState(false)
@@ -53,16 +53,20 @@ export function AnnouncementsCalendarPanel() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ from: range.from, to: range.to })
-    const res = await fetch(`/api/admin/content/announcements?${params}`)
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load calendar.') })
+    try {
+      const params = new URLSearchParams({ from: range.from, to: range.to })
+      const res = await fetch(`/api/admin/content/announcements?${params}`)
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load calendar.') })
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      setRows(Array.isArray(data.announcements) ? data.announcements : [])
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load calendar.' })
+    } finally {
       setLoading(false)
-      return
     }
-    const data = await res.json()
-    setRows(Array.isArray(data.announcements) ? data.announcements : [])
-    setLoading(false)
   }, [range.from, range.to])
 
   useEffect(() => {
@@ -80,51 +84,60 @@ export function AnnouncementsCalendarPanel() {
   }, [rows])
 
   const schedule = async () => {
+    if (!canWrite) return
     if (!title.trim() || !body.trim() || !scheduledAt) return
     setSaving(true)
-    const res = await fetch('/api/admin/content/announcements', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: title.trim(),
-        body: body.trim(),
-        segment,
-        scheduledAt: new Date(scheduledAt).toISOString(),
-      }),
-    })
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Schedule failed.') })
+    try {
+      const res = await fetch('/api/admin/content/announcements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(),
+          body: body.trim(),
+          segment,
+          scheduledAt: new Date(scheduledAt).toISOString(),
+        }),
+      })
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Schedule failed.') })
+        return
+      }
+      setFeedback({ tone: 'success', message: 'Announcement scheduled.' })
+      setTitle('')
+      setBody('')
+      setScheduledAt('')
+      await load()
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Schedule failed.' })
+    } finally {
       setSaving(false)
-      return
     }
-    setFeedback({ tone: 'success', message: 'Announcement scheduled.' })
-    setTitle('')
-    setBody('')
-    setScheduledAt('')
-    setSaving(false)
-    await load()
   }
 
   const runAction = async (id: string, action: 'cancel' | 'send_now') => {
+    if (!canWrite) return
     setBusy(true)
-    const res = await fetch('/api/admin/content/announcements/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, action }),
-    })
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Action failed.') })
+    try {
+      const res = await fetch('/api/admin/content/announcements/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action }),
+      })
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Action failed.') })
+        return
+      }
+      setFeedback({
+        tone: 'success',
+        message: action === 'send_now' ? 'Broadcast sent.' : 'Announcement cancelled.',
+      })
+      await load()
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Action failed.' })
+    } finally {
       setBusy(false)
       setPendingSend(null)
-      return
     }
-    setFeedback({
-      tone: 'success',
-      message: action === 'send_now' ? 'Broadcast sent.' : 'Announcement cancelled.',
-    })
-    setBusy(false)
-    setPendingSend(null)
-    await load()
   }
 
   const dim = daysInMonth(cursor)
@@ -191,7 +204,7 @@ export function AnnouncementsCalendarPanel() {
                         <button
                           key={a.id}
                           type="button"
-                          onClick={() => a.status === 'scheduled' && setPendingSend(a)}
+                          onClick={() => canWrite && a.status === 'scheduled' && setPendingSend(a)}
                           className={`block w-full truncate rounded px-1 py-0.5 text-left text-[10px] ${
                             a.status === 'sent'
                               ? 'bg-emerald-50 text-emerald-800'
@@ -215,6 +228,14 @@ export function AnnouncementsCalendarPanel() {
           )}
         </div>
 
+        {!canWrite ? (
+          <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-2">
+            <h3 className="text-sm font-bold text-gray-900">Read-only</h3>
+            <p className="text-[11px] text-gray-500">
+              Your role can view the announcement calendar but cannot schedule, send, or cancel announcements.
+            </p>
+          </div>
+        ) : (
         <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
           <h3 className="text-sm font-bold text-gray-900">Schedule announcement</h3>
           <select
@@ -258,9 +279,10 @@ export function AnnouncementsCalendarPanel() {
             Click a scheduled item to send or cancel the schedule. Nothing auto-sends until you confirm.
           </p>
         </div>
+        )}
       </div>
 
-      {pendingSend ? (
+      {canWrite && pendingSend ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-2xl">
             <h3 className="text-lg font-bold text-gray-900">Scheduled announcement</h3>

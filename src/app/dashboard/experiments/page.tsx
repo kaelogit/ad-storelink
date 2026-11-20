@@ -2,15 +2,15 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, FlaskConical, Loader2, RefreshCcw, ShieldOff } from 'lucide-react'
+import { FlaskConical, Loader2, RefreshCcw, ShieldOff, Snowflake } from 'lucide-react'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { EmptyState } from '../../../components/admin/EmptyState'
 import { Card, CardContent, CardHeader } from '../../../components/ui'
 import { parseApiError } from '../../../utils/http'
-import type { AdminRole } from '../../../types/admin'
-import { createClient } from '../../../utils/supabase/client'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 type HomeSessionRow = {
   variant: string
@@ -65,14 +65,135 @@ const REASON_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ]
 
+const HOME_SESSION_KEYS = [
+  { value: 'home_feed_rank_v1', label: 'Home v1' },
+  { value: 'home_feed_rank_v2', label: 'Home v2' },
+] as const
+
+const EXPLORE_SESSION_KEYS = [
+  { value: 'explore_feed_rank_v1', label: 'Explore v1' },
+  { value: 'explore_feed_rank_v2_discovery', label: 'Discovery v2' },
+  { value: 'explore_feed_rank_v2_for_you', label: 'For you v2' },
+  { value: 'explore_feed_rank_v2_spotlight', label: 'Spotlight v2' },
+] as const
+
 type PendingAction =
   | { type: 'flag'; key: string; enabled: boolean; rolloutPercent: number }
   | { type: 'experiment'; key: string; freezeControl: boolean; isActive?: boolean }
   | { type: 'kill_switch' }
 
+function numConfig(config: Record<string, unknown> | undefined, key: string): number | null {
+  const v = config?.[key]
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim() && Number.isFinite(Number(v))) return Number(v)
+  return null
+}
+
+function shortKnobLabel(key: string): string {
+  if (key.includes('home')) return 'Home'
+  if (key.includes('spotlight')) return 'Spotlight'
+  if (key.includes('for_you')) return 'For you'
+  if (key.includes('discovery')) return 'Discovery'
+  return key.replace(/_rank_v3_knobs$/, '').replace(/_/g, ' ')
+}
+
+function WeightBars({ variants, weights }: { variants: string[]; weights: number[] }) {
+  const total = weights.reduce((s, w) => s + Number(w || 0), 0) || 1
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex h-2 overflow-hidden rounded-full bg-zinc-100">
+        {variants.map((variant, i) => {
+          const w = Number(weights[i] || 0)
+          const pct = (w / total) * 100
+          if (pct <= 0) return null
+          const isControl = variant === 'control'
+          return (
+            <div
+              key={`${variant}-${i}`}
+              title={`${variant}: ${w}`}
+              style={{ width: `${pct}%` }}
+              className={isControl ? 'bg-zinc-500' : 'bg-emerald-500/80'}
+            />
+          )
+        })}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {variants.map((variant, i) => {
+          const w = Number(weights[i] || 0)
+          const pct = Math.round((w / total) * 100)
+          return (
+            <span
+              key={`${variant}-chip-${i}`}
+              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-[10px] text-zinc-700"
+            >
+              <span className="font-semibold">{variant}</span>
+              <span className="tabular-nums text-zinc-400">{w}</span>
+              <span className="tabular-nums text-zinc-400">({pct}%)</span>
+            </span>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function KnobCard({ knob }: { knob: FeatureFlagRow }) {
+  const cfg = knob.config ?? {}
+  const quality = numConfig(cfg, 'quality_multiplier')
+  const affinity = numConfig(cfg, 'affinity_multiplier')
+  const negative = numConfig(cfg, 'negative_multiplier')
+  const maxBonus = numConfig(cfg, 'max_bonus')
+  const maxPenalty = numConfig(cfg, 'max_penalty')
+  const frozen = Boolean(cfg.phase5_baseline_frozen)
+  const freezeNote = typeof cfg.phase5_freeze_note === 'string' ? cfg.phase5_freeze_note : null
+  const frozenAt = typeof cfg.phase5_frozen_at === 'string' ? cfg.phase5_frozen_at : null
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-zinc-900">{shortKnobLabel(knob.key)}</p>
+          <p className="mt-0.5 font-mono text-[10px] text-zinc-400">{knob.key}</p>
+        </div>
+        <StatusBadge
+          label={frozen ? 'Baseline frozen' : 'Live knobs'}
+          tone={frozen ? 'info' : 'success'}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <Metric label="Quality ×" value={quality != null ? quality.toFixed(2) : '—'} />
+        <Metric label="Affinity ×" value={affinity != null ? affinity.toFixed(2) : '—'} />
+        <Metric label="Negative ×" value={negative != null ? negative.toFixed(2) : '—'} />
+        <Metric label="Max bonus" value={maxBonus != null ? maxBonus.toFixed(2) : '—'} />
+        <Metric label="Max penalty" value={maxPenalty != null ? maxPenalty.toFixed(2) : '—'} />
+      </div>
+
+      {freezeNote || frozenAt ? (
+        <p className="mt-3 border-t border-zinc-100 pt-2 text-[11px] leading-relaxed text-zinc-500">
+          {freezeNote}
+          {frozenAt ? (
+            <span className="mt-1 block text-[10px] text-zinc-400">
+              Frozen {new Date(frozenAt).toLocaleString()}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-zinc-50 px-2.5 py-2">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900">{value}</p>
+    </div>
+  )
+}
+
 export default function ExperimentsDashboardPage() {
-  const supabase = createClient()
-  const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
+  const { role, loading: roleLoading } = useAdminRole()
   const [state, setState] = useState<RolloutState | null>(null)
   const [homeRows, setHomeRows] = useState<HomeSessionRow[]>([])
   const [exploreRows, setExploreRows] = useState<ExploreSessionRow[]>([])
@@ -83,39 +204,34 @@ export default function ExperimentsDashboardPage() {
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
 
-  const canEdit = adminRole === 'super_admin'
-
-  useEffect(() => {
-    let mounted = true
-    const loadRole = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !mounted) return
-      const { data } = await supabase.from('admin_users').select('role').eq('id', user.id).maybeSingle()
-      if (mounted && data?.role) setAdminRole(data.role as AdminRole)
-    }
-    void loadRole()
-    return () => { mounted = false }
-  }, [supabase])
+  const canEdit = role === 'super_admin'
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ homeKey, exploreKey })
-    const response = await fetch(`/api/admin/experiments/state?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load experiments state.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({ homeKey, exploreKey })
+      const response = await fetch(`/api/admin/experiments/state?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load experiments state.')
+        setFeedback({ tone: 'error', message: msg })
+        return
+      }
+      const json = (await response.json()) as {
+        state?: RolloutState
+        homeSummary?: HomeSessionRow[]
+        exploreSummary?: ExploreSessionRow[]
+      }
+      setState(json.state ?? null)
+      setHomeRows(json.homeSummary ?? [])
+      setExploreRows(json.exploreSummary ?? [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load experiments state.',
+      })
+    } finally {
       setLoading(false)
-      return
     }
-    const json = (await response.json()) as {
-      state?: RolloutState
-      homeSummary?: HomeSessionRow[]
-      exploreSummary?: ExploreSessionRow[]
-    }
-    setState(json.state ?? null)
-    setHomeRows(json.homeSummary ?? [])
-    setExploreRows(json.exploreSummary ?? [])
-    setLoading(false)
   }, [exploreKey, homeKey])
 
   useEffect(() => {
@@ -172,6 +288,11 @@ export default function ExperimentsDashboardPage() {
       setFeedback({ tone: 'success', message: 'Ranking rollout updated and audited.' })
       setPendingAction(null)
       await loadData()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Update failed.',
+      })
     } finally {
       setSubmitting(false)
     }
@@ -198,7 +319,9 @@ export default function ExperimentsDashboardPage() {
       description: pendingAction.freezeControl
         ? 'Sets variants to ["control"] and weights to [100].'
         : 'Toggle experiment active state.',
-      impact: pendingAction.freezeControl ? 'All users get control variant.' : `is_active=${pendingAction.isActive ?? 'unchanged'}`,
+      impact: pendingAction.freezeControl
+        ? 'All users get control variant.'
+        : `is_active=${pendingAction.isActive ?? 'unchanged'}`,
     }
   }, [pendingAction])
 
@@ -208,46 +331,63 @@ export default function ExperimentsDashboardPage() {
     return map
   }, [state?.flags])
 
+  const anyV2Live = useMemo(() => {
+    const home = flagByKey.get('home_feed_rank_v2_enabled')
+    const explore = flagByKey.get('explore_rank_v2_enabled')
+    return Boolean(
+      (home?.enabled && (home.rollout_percent ?? 0) > 0) ||
+        (explore?.enabled && (explore.rollout_percent ?? 0) > 0),
+    )
+  }, [flagByKey])
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <PageHeader
         title="Ranking Experiments"
-        subtitle="Home / Explore v2 rollout flags, calibration experiments, v3 knobs, and session metrics."
+        subtitle="Home / Explore v2 rollout, calibration experiments, frozen v3 knobs, and session metrics."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
+            >
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+              Refresh
+            </button>
+            {canEdit ? (
+              <button
+                type="button"
+                onClick={() => setPendingAction({ type: 'kill_switch' })}
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-100"
+              >
+                <ShieldOff className="h-3.5 w-3.5" />
+                Kill switch
+              </button>
+            ) : null}
+          </div>
+        }
       />
 
-      {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+      {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
 
-      {!canEdit ? (
-        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Analyst view: read metrics and current rollout. Super Admin required to change flags or experiments.
+      {!roleLoading && !canEdit ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Analyst view. Metrics and rollout are visible; only Super Admin can change flags or experiments.
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void loadData()}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-          Refresh
-        </button>
-        {canEdit ? (
-          <button
-            type="button"
-            onClick={() => setPendingAction({ type: 'kill_switch' })}
-            className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 hover:bg-red-100"
-          >
-            <ShieldOff className="h-4 w-4" />
-            Kill switch (v2 off + freeze)
-          </button>
-        ) : null}
-      </div>
+      {anyV2Live ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+          <strong>Launch hold:</strong> Home/Explore v2 are at low rollout. Keep freeze/kill switch ready until
+          session metrics fill in after go-live.
+        </p>
+      ) : null}
 
       {loading && !state ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+          <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
         </div>
       ) : (
         <>
@@ -255,38 +395,57 @@ export default function ExperimentsDashboardPage() {
             {(['home_feed_rank_v2_enabled', 'explore_rank_v2_enabled'] as const).map((key) => {
               const flag = flagByKey.get(key)
               const surface = key.includes('home') ? 'Home' : 'Explore'
+              const live = Boolean(flag?.enabled && (flag.rollout_percent ?? 0) > 0)
+              const activePct = live ? flag!.rollout_percent : 0
               return (
-                <div key={key} className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4">
+                <div key={key} className="rounded-xl border border-zinc-200 bg-white p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">{surface} v2 flag</p>
-                      <p className="text-sm font-mono font-bold text-gray-900 mt-1">{key}</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        {surface} v2 flag
+                      </p>
+                      <p className="mt-1 font-mono text-xs font-semibold text-zinc-900">{key}</p>
                     </div>
                     <StatusBadge
-                      label={flag?.enabled ? `${flag.rollout_percent}% live` : 'Off'}
-                      tone={flag?.enabled && (flag.rollout_percent ?? 0) > 0 ? 'success' : 'neutral'}
+                      label={live ? `${flag!.rollout_percent}% live` : 'Off'}
+                      tone={live ? 'success' : 'neutral'}
                     />
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-2">
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-100">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all"
+                      style={{ width: `${Math.min(100, Math.max(0, activePct))}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[10px] text-zinc-500">
                     Updated {flag?.updated_at ? new Date(flag.updated_at).toLocaleString() : '—'}
                   </p>
                   {canEdit ? (
                     <div className="mt-3 flex flex-wrap gap-1.5">
-                      {ROLLOUT_PRESETS.map((pct) => (
-                        <button
-                          key={pct}
-                          type="button"
-                          onClick={() => setPendingAction({
-                            type: 'flag',
-                            key,
-                            enabled: pct > 0,
-                            rolloutPercent: pct,
-                          })}
-                          className="rounded-md border border-indigo-200 bg-white px-2 py-1 text-[10px] font-bold text-indigo-800 hover:bg-indigo-50"
-                        >
-                          {pct === 0 ? 'Off' : `${pct}%`}
-                        </button>
-                      ))}
+                      {ROLLOUT_PRESETS.map((pct) => {
+                        const on = live ? activePct === pct : pct === 0
+                        return (
+                          <button
+                            key={pct}
+                            type="button"
+                            onClick={() =>
+                              setPendingAction({
+                                type: 'flag',
+                                key,
+                                enabled: pct > 0,
+                                rolloutPercent: pct,
+                              })
+                            }
+                            className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
+                              on
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                                : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                            }`}
+                          >
+                            {pct === 0 ? 'Off' : `${pct}%`}
+                          </button>
+                        )
+                      })}
                     </div>
                   ) : null}
                 </div>
@@ -296,114 +455,156 @@ export default function ExperimentsDashboardPage() {
 
           <Card>
             <CardHeader>
-              <h2 className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
                 <FlaskConical size={14} /> v2 calibration experiments
               </h2>
-              <p className="text-xs text-[var(--muted)]">Weights must match variant count. Use Freeze for safe rollback.</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Weights must match variant count. Freeze forces 100% control for safe rollback.
+              </p>
             </CardHeader>
             <CardContent className="space-y-3">
-              {(state?.experiments ?? []).map((exp) => (
-                <div key={exp.key} className="rounded-lg border border-gray-200 bg-gray-50/80 p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-mono font-bold text-gray-900">{exp.key}</p>
-                      <p className="text-[10px] text-gray-500 mt-0.5">{exp.description}</p>
+              {(state?.experiments ?? []).length === 0 ? (
+                <EmptyState
+                  icon={FlaskConical}
+                  title="No experiments"
+                  message="No v2 calibration experiments are configured."
+                />
+              ) : null}
+              {(state?.experiments ?? []).map((exp) => {
+                const variants = Array.isArray(exp.variants) ? exp.variants : []
+                const weights = Array.isArray(exp.weights) ? exp.weights.map((w) => Number(w) || 0) : []
+                return (
+                  <div key={exp.key} className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-mono text-xs font-semibold text-zinc-900">{exp.key}</p>
+                        {exp.description ? (
+                          <p className="mt-0.5 text-[11px] text-zinc-500">{exp.description}</p>
+                        ) : null}
+                      </div>
+                      <StatusBadge
+                        label={exp.is_active ? 'Active' : 'Inactive'}
+                        tone={exp.is_active ? 'success' : 'neutral'}
+                      />
                     </div>
-                    <StatusBadge label={exp.is_active ? 'Active' : 'Inactive'} tone={exp.is_active ? 'success' : 'warning'} />
+                    <WeightBars variants={variants} weights={weights} />
+                    {canEdit ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingAction({
+                              type: 'experiment',
+                              key: exp.key,
+                              freezeControl: true,
+                            })
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+                        >
+                          <Snowflake className="h-3 w-3" />
+                          Freeze to control
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingAction({
+                              type: 'experiment',
+                              key: exp.key,
+                              freezeControl: false,
+                              isActive: !exp.is_active,
+                            })
+                          }
+                          className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
+                        >
+                          {exp.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  <p className="text-[10px] text-gray-600 mt-2 font-mono break-all">
-                    variants: {JSON.stringify(exp.variants ?? [])}
-                  </p>
-                  <p className="text-[10px] text-gray-600 font-mono break-all">
-                    weights: {JSON.stringify(exp.weights ?? [])}
-                  </p>
-                  {canEdit ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPendingAction({
-                          type: 'experiment',
-                          key: exp.key,
-                          freezeControl: true,
-                        })}
-                        className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800"
-                      >
-                        Freeze to control
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPendingAction({
-                          type: 'experiment',
-                          key: exp.key,
-                          freezeControl: false,
-                          isActive: !exp.is_active,
-                        })}
-                        className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-700"
-                      >
-                        {exp.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
+                )
+              })}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <h2 className="text-sm font-semibold text-[var(--foreground)]">v3 calibration knobs (read-only)</h2>
-              <p className="text-xs text-[var(--muted)]">
-                Runtime multipliers from feature_flags.config. View on{' '}
-                <Link href="/dashboard/feature-flags" className="font-bold text-violet-600 underline">Feature Flags</Link> (calibration category).
-              </p>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {(state?.v3_knobs ?? []).map((knob) => (
-                <div key={knob.key} className="rounded-lg border border-dashed border-gray-200 p-3">
-                  <p className="text-[10px] font-mono font-bold text-gray-800">{knob.key}</p>
-                  <pre className="text-[9px] text-gray-600 mt-2 whitespace-pre-wrap break-all">
-                    {JSON.stringify(knob.config ?? {}, null, 2)}
-                  </pre>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-900">v3 calibration knobs</h2>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Read-only runtime multipliers. Edit under Feature Flags → calibration.
+                  </p>
                 </div>
-              ))}
+                <Link
+                  href="/dashboard/feature-flags"
+                  className="rounded-md border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                >
+                  Open Feature Flags
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(state?.v3_knobs ?? []).length === 0 ? (
+                <EmptyState title="No v3 knobs" message="No v3 calibration knobs are configured." />
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {(state?.v3_knobs ?? []).map((knob) => (
+                    <KnobCard key={knob.key} knob={knob} />
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-xs font-bold text-gray-500">
-              Home sessions key
-              <select
-                value={homeKey}
-                onChange={(e) => setHomeKey(e.target.value)}
-                className="ml-2 rounded border border-gray-200 px-2 py-1 text-gray-800"
-              >
-                <option value="home_feed_rank_v1">home_feed_rank_v1</option>
-                <option value="home_feed_rank_v2">home_feed_rank_v2</option>
-              </select>
-            </label>
-            <label className="text-xs font-bold text-gray-500">
-              Explore sessions key
-              <select
-                value={exploreKey}
-                onChange={(e) => setExploreKey(e.target.value)}
-                className="ml-2 rounded border border-gray-200 px-2 py-1 text-gray-800"
-              >
-                <option value="explore_feed_rank_v1">explore_feed_rank_v1</option>
-                <option value="explore_feed_rank_v2_discovery">explore_feed_rank_v2_discovery</option>
-                <option value="explore_feed_rank_v2_for_you">explore_feed_rank_v2_for_you</option>
-                <option value="explore_feed_rank_v2_spotlight">explore_feed_rank_v2_spotlight</option>
-              </select>
-            </label>
+          <div className="rounded-xl border border-zinc-200 bg-white p-4">
+            <p className="text-sm font-semibold text-zinc-900">Session metrics</p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Last 14 days by variant. Switch keys to compare v1 vs v2 surfaces.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-4">
+              <label className="flex flex-col gap-1 text-[11px] font-semibold text-zinc-500">
+                Home key
+                <select
+                  value={homeKey}
+                  onChange={(e) => setHomeKey(e.target.value)}
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800"
+                >
+                  {HOME_SESSION_KEYS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label} ({opt.value})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-[11px] font-semibold text-zinc-500">
+                Explore key
+                <select
+                  value={exploreKey}
+                  onChange={(e) => setExploreKey(e.target.value)}
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800"
+                >
+                  {EXPLORE_SESSION_KEYS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label} ({opt.value})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <SessionTable
-              title={`Home sessions – ${homeKey}`}
-              empty="No Home sessions in the last 14 days."
+              title="Home sessions"
+              keyLabel={homeKey}
+              empty="No Home sessions in the last 14 days. Expected until traffic hits this experiment key."
               rows={homeRows}
               columns={[
                 ['Sessions', (r: HomeSessionRow) => r.sessions],
-                ['Avg time', (r) => r.avg_duration_ms != null ? `${Math.round(r.avg_duration_ms / 1000)}s` : '—'],
+                [
+                  'Avg time',
+                  (r) => (r.avg_duration_ms != null ? `${Math.round(r.avg_duration_ms / 1000)}s` : '—'),
+                ],
                 ['Items', (r) => r.avg_items_seen?.toFixed(1) ?? '—'],
                 ['Clicks', (r) => r.avg_clicks?.toFixed(1) ?? '—'],
                 ['Cart', (r) => r.avg_add_to_cart?.toFixed(2) ?? '—'],
@@ -411,12 +612,16 @@ export default function ExperimentsDashboardPage() {
               ]}
             />
             <SessionTable
-              title={`Explore sessions – ${exploreKey}`}
-              empty="No Explore sessions in the last 14 days."
+              title="Explore sessions"
+              keyLabel={exploreKey}
+              empty="No Explore sessions in the last 14 days. Expected until traffic hits this experiment key."
               rows={exploreRows}
               columns={[
                 ['Sessions', (r: ExploreSessionRow) => r.sessions],
-                ['Avg time', (r) => r.avg_duration_ms != null ? `${Math.round(r.avg_duration_ms / 1000)}s` : '—'],
+                [
+                  'Avg time',
+                  (r) => (r.avg_duration_ms != null ? `${Math.round(r.avg_duration_ms / 1000)}s` : '—'),
+                ],
                 ['Items', (r) => r.avg_items_seen?.toFixed(1) ?? '—'],
                 ['Profiles', (r) => r.avg_profile_taps?.toFixed(2) ?? '—'],
                 ['Products', (r) => r.avg_product_clicks?.toFixed(2) ?? '—'],
@@ -445,11 +650,13 @@ export default function ExperimentsDashboardPage() {
 
 function SessionTable<T extends { variant: string }>({
   title,
+  keyLabel,
   empty,
   rows,
   columns,
 }: {
   title: string
+  keyLabel: string
   empty: string
   rows: T[]
   columns: [string, (row: T) => string | number][]
@@ -457,32 +664,37 @@ function SessionTable<T extends { variant: string }>({
   return (
     <Card>
       <CardHeader>
-        <h2 className="text-sm font-semibold text-[var(--foreground)]">{title}</h2>
-        <p className="text-xs text-[var(--muted)]">Last 14 days, grouped by variant.</p>
+        <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
+        <p className="mt-0.5 font-mono text-[11px] text-zinc-400">{keyLabel}</p>
+        <p className="mt-1 text-xs text-zinc-500">Last 14 days, grouped by variant.</p>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <div className="py-8 text-center text-xs text-[var(--muted)] flex flex-col items-center gap-2">
-            <AlertTriangle size={16} className="text-gray-300" />
-            {empty}
+          <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-8 text-center">
+            <p className="text-sm font-semibold text-zinc-800">No sessions yet</p>
+            <p className="mt-1 text-xs text-zinc-500">{empty}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead>
-                <tr className="border-b border-[var(--border)]">
-                  <th className="px-3 py-2 text-left font-medium text-[var(--muted)]">Variant</th>
+                <tr className="border-b border-zinc-200">
+                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Variant</th>
                   {columns.map(([label]) => (
-                    <th key={label} className="px-3 py-2 text-right font-medium text-[var(--muted)]">{label}</th>
+                    <th key={label} className="px-3 py-2 text-right font-medium text-zinc-500">
+                      {label}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.variant} className="border-b border-[var(--border)]/60 last:border-0">
-                    <td className="px-3 py-2 font-semibold text-[var(--foreground)]">{row.variant}</td>
+                  <tr key={row.variant} className="border-b border-zinc-100 last:border-0">
+                    <td className="px-3 py-2 font-semibold text-zinc-900">{row.variant}</td>
                     {columns.map(([label, render]) => (
-                      <td key={label} className="px-3 py-2 text-right">{render(row)}</td>
+                      <td key={label} className="px-3 py-2 text-right tabular-nums text-zinc-700">
+                        {render(row)}
+                      </td>
                     ))}
                   </tr>
                 ))}

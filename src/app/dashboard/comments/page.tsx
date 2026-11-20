@@ -11,6 +11,7 @@ import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 type CommentReportRow = {
   report_id: string
@@ -82,11 +83,14 @@ function contextUrl(row: CommentReportRow) {
 }
 
 export default function CommentsModerationPage() {
+  const { role } = useAdminRole()
+  const canModerate =
+    role === 'super_admin' || role === 'moderator' || role === 'support' || role === 'content'
   const [rows, setRows] = useState<CommentReportRow[]>([])
   const [counts, setCounts] = useState<StatusCounts | null>(null)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [statusTab, setStatusTab] = useState<(typeof STATUS_TABS)[number]>('all')
+  const [statusTab, setStatusTab] = useState<(typeof STATUS_TABS)[number]>('open')
   const [sourceTab, setSourceTab] = useState<(typeof SOURCE_TABS)[number]>('all')
   const [applyStrike, setApplyStrike] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
@@ -97,28 +101,37 @@ export default function CommentsModerationPage() {
 
   const loadReports = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      status: statusTab,
-      limit: '120',
-      offset: '0',
-    })
-    if (sourceTab !== 'all') params.set('sourceType', sourceTab)
-    const response = await fetch(`/api/admin/comments/reports/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load comment reports.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({
+        status: statusTab,
+        limit: '120',
+        offset: '0',
+      })
+      if (sourceTab !== 'all') params.set('sourceType', sourceTab)
+      const response = await fetch(`/api/admin/comments/reports/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load comment reports.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        setCounts(null)
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: CommentReportRow[]
+        counts?: StatusCounts
+      }
+      setCounts(payload.counts ?? null)
+      setRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load comment reports.',
+      })
       setRows([])
       setCounts(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as {
-      rows?: CommentReportRow[]
-      counts?: StatusCounts
-    }
-    setCounts(payload.counts ?? null)
-    setRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [sourceTab, statusTab])
 
   useEffect(() => {
@@ -214,7 +227,7 @@ export default function CommentsModerationPage() {
 
       {counts && counts.total === 0 ? (
         <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-          Desk is live — <span className="font-bold">0</span> comment reports filed yet. Reports appear here when a user
+          Desk is live. <span className="font-bold">0</span> comment reports filed yet. Reports appear here when a user
           reports a comment in the app (product / service / spotlight / reel).
         </div>
       ) : null}
@@ -364,6 +377,7 @@ export default function CommentsModerationPage() {
                     </span>
                   </DataTableCell>
                   <DataTableCell>
+                    {canModerate ? (
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -395,6 +409,7 @@ export default function CommentsModerationPage() {
                       >
                         Delete
                       </button>
+                      {(row.comment_is_hidden || row.comment_is_deleted) ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -405,7 +420,11 @@ export default function CommentsModerationPage() {
                       >
                         Reinstate
                       </button>
+                      ) : null}
                     </div>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">Read-only</span>
+                    )}
                   </DataTableCell>
                 </DataTableRow>
               ))}

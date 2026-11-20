@@ -22,6 +22,7 @@ import { parseApiError } from '../../../utils/http'
 import { useAdminRole } from '../../../hooks/useAdminRole'
 import { AssigneeChip, useQueueAssignments } from '../../../hooks/useQueueAssignments'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal'
 
 type ReportRow = {
   report_id: string
@@ -99,7 +100,7 @@ function deskHref(row: ReportRow) {
 }
 
 function formatFpRate(rate: number | null | undefined): string {
-  if (rate == null || Number.isNaN(Number(rate))) return '—'
+  if (rate == null || Number.isNaN(Number(rate))) return '-'
   return `${(Number(rate) * 100).toFixed(1)}%`
 }
 
@@ -112,7 +113,11 @@ function statusTone(status: string): 'success' | 'danger' | 'warning' | 'neutral
 }
 
 export default function ContentReportsInboxPage() {
-  const { canWrite } = useAdminRole()
+  const { role, canWrite } = useAdminRole()
+  /** Matches policy-resolve API: super_admin | moderator */
+  const canResolvePolicy = role === 'super_admin' || role === 'moderator'
+  /** Matches bulk-triage API: super_admin | moderator | support */
+  const canBulkDismiss = role === 'super_admin' || role === 'moderator' || role === 'support'
   const [payload, setPayload] = useState<InboxPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [typeFilter, setTypeFilter] = useState<string>('all')
@@ -125,6 +130,9 @@ export default function ContentReportsInboxPage() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [bulkDismissOpen, setBulkDismissOpen] = useState(false)
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [pendingPolicyOutcome, setPendingPolicyOutcome] = useState<
+    'true_positive' | 'false_positive' | 'inconclusive' | null
+  >(null)
 
   const loadInbox = useCallback(async () => {
     setLoading(true)
@@ -225,7 +233,7 @@ export default function ContentReportsInboxPage() {
     <div className="space-y-6">
       <PageHeader
         title="Content reports inbox"
-        subtitle="One queue for user reports and ML borderline policy flags — triage here, action in the surface desk."
+        subtitle="One queue for user reports and ML borderline policy flags. Triage here, action in the surface desk."
         actions={
           <div className="flex flex-col items-end gap-2">
             <DeskLinkPills
@@ -331,7 +339,7 @@ export default function ContentReportsInboxPage() {
             Search
           </button>
         </form>
-        {canWrite && selectedKeys.size > 0 ? (
+        {canBulkDismiss && selectedKeys.size > 0 ? (
           <button
             type="button"
             onClick={() => setBulkDismissOpen(true)}
@@ -400,7 +408,7 @@ export default function ContentReportsInboxPage() {
                     </DataTableCell>
                     <DataTableCell>
                       <p className="text-xs font-medium text-gray-900 truncate max-w-[220px]">
-                        {row.context_title || row.report_reason || '—'}
+                        {row.context_title || row.report_reason || '-'}
                       </p>
                       <p className="text-[10px] text-gray-500 font-mono truncate max-w-[220px]">
                         @{row.subject_slug || 'unknown'}
@@ -428,7 +436,7 @@ export default function ContentReportsInboxPage() {
                         />
                       ) : (
                         <span className="text-[10px] text-gray-400">
-                          {assignments.map[row.report_id]?.assignee_label || '—'}
+                          {assignments.map[row.report_id]?.assignee_label || '-'}
                         </span>
                       )}
                     </DataTableCell>
@@ -460,21 +468,21 @@ export default function ContentReportsInboxPage() {
                 <p className="text-[10px] font-mono text-gray-500 mt-1 break-all">{selected.report_id}</p>
               </div>
 
-              <DetailRow label="Reason" value={selected.report_reason || '—'} />
+              <DetailRow label="Reason" value={selected.report_reason || '-'} />
               {selected.report_details ? <DetailRow label="Details" value={selected.report_details} /> : null}
               <DetailRow
                 label="Filed"
-                value={selected.report_created_at ? new Date(selected.report_created_at).toLocaleString() : '—'}
+                value={selected.report_created_at ? new Date(selected.report_created_at).toLocaleString() : '-'}
               />
               <DetailRow
                 label="Reporter"
                 value={
                   selected.report_type === 'policy'
                     ? 'system (ML)'
-                    : `@${selected.reporter_slug || selected.reporter_id?.slice(0, 8) || '—'}`
+                    : `@${selected.reporter_slug || selected.reporter_id?.slice(0, 8) || '-'}`
                 }
               />
-              <DetailRow label="Subject" value={`@${selected.subject_slug || '—'}`} />
+              <DetailRow label="Subject" value={`@${selected.subject_slug || '-'}`} />
               {selected.report_type === 'policy' && selected.report_subtype ? (
                 <DetailRow label="Surface" value={selected.report_subtype} />
               ) : null}
@@ -487,32 +495,38 @@ export default function ContentReportsInboxPage() {
                   <p className="text-[10px] text-gray-500 leading-relaxed">
                     Content stayed live (#61 fail-open). Mark whether the model was right, then take desk action if needed.
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={resolving}
-                      onClick={() => void resolvePolicyFlag('true_positive')}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      True positive
-                    </button>
-                    <button
-                      type="button"
-                      disabled={resolving}
-                      onClick={() => void resolvePolicyFlag('false_positive')}
-                      className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      False positive
-                    </button>
-                    <button
-                      type="button"
-                      disabled={resolving}
-                      onClick={() => void resolvePolicyFlag('inconclusive')}
-                      className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Inconclusive
-                    </button>
-                  </div>
+                  {canResolvePolicy ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={resolving}
+                        onClick={() => setPendingPolicyOutcome('true_positive')}
+                        className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        True positive
+                      </button>
+                      <button
+                        type="button"
+                        disabled={resolving}
+                        onClick={() => setPendingPolicyOutcome('false_positive')}
+                        className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        False positive
+                      </button>
+                      <button
+                        type="button"
+                        disabled={resolving}
+                        onClick={() => setPendingPolicyOutcome('inconclusive')}
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        Inconclusive
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-gray-400">
+                      Moderator or super admin required to resolve ML flags.
+                    </p>
+                  )}
                 </div>
               ) : null}
 
@@ -549,10 +563,24 @@ export default function ContentReportsInboxPage() {
         </div>
       </div>
 
+      <ConfirmActionModal
+        open={pendingPolicyOutcome !== null}
+        title="Resolve ML policy flag?"
+        description={`Mark this flag as ${String(pendingPolicyOutcome || '').replace(/_/g, ' ')}. Content is not auto-removed.`}
+        impactSummary="Outcome is stored for model quality tracking and audited."
+        confirmLabel="Confirm outcome"
+        submitting={resolving}
+        onClose={() => setPendingPolicyOutcome(null)}
+        onConfirm={async () => {
+          if (!pendingPolicyOutcome) return
+          await resolvePolicyFlag(pendingPolicyOutcome)
+          setPendingPolicyOutcome(null)
+        }}
+      />
       <ActionReasonModal
         open={bulkDismissOpen}
         title="Bulk dismiss reports"
-        description={`Dismiss ${selectedKeys.size} selected report(s). Content itself is not removed — only the report is closed.`}
+        description={`Dismiss ${selectedKeys.size} selected report(s). Content itself is not removed. Only the report is closed.`}
         impactSummary="Each dismiss is audited. Use surface desks for hide/remove of the underlying post."
         categoryOptions={[
           { value: 'no_violation', label: 'No policy violation' },

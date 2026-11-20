@@ -28,12 +28,12 @@ import {
   StackedArea,
   TrendArea,
   formatCount,
-  formatNaira,
+  formatMoney,
   formatPct,
 } from '../../../components/admin/charts'
 import { parseApiError } from '../../../utils/http'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
-import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
+import { ALL_COUNTRIES_CODE, currencyForCountryCode } from '../../../constants/SupportedCountries'
 
 type SeriesRow = {
   report_date: string
@@ -70,30 +70,41 @@ const DAY_OPTIONS = [7, 30, 90] as const
 export default function AnalyticsWarehousePage() {
   const { countryCode, isGlobalView } = useCountryFilter()
   const [payload, setPayload] = useState<WarehousePayload | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [days, setDays] = useState<number>(30)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(
     null,
   )
+  const deskCurrency = currencyForCountryCode(isGlobalView ? 'NG' : countryCode)
+  const moneyLabel = (amount: number | null | undefined) =>
+    isGlobalView ? '—' : formatMoney(amount, deskCurrency)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
-      days: String(days),
-    })
-    const response = await fetch(`/api/admin/analytics/warehouse?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load analytics warehouse.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({
+        country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
+        days: String(days),
+      })
+      const response = await fetch(`/api/admin/analytics/warehouse?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load analytics warehouse.')
+        setFeedback({ tone: 'error', message: msg })
+        setPayload(null)
+        return
+      }
+      const data = (await response.json()) as WarehousePayload
+      setPayload(data)
+      setFeedback(null)
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load analytics warehouse.',
+      })
       setPayload(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const data = (await response.json()) as WarehousePayload
-    setPayload(data)
-    setFeedback(null)
-    setLoading(false)
   }, [countryCode, days])
 
   useEffect(() => {
@@ -176,10 +187,10 @@ export default function AnalyticsWarehousePage() {
 
       {isGlobalView && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">
-          <p className="text-sm font-semibold">All countries selected — money totals can mix currencies</p>
+          <p className="text-sm font-semibold">All countries selected. Money totals mix currencies</p>
           <p className="mt-1 text-xs text-amber-700">
-            DAU, orders, and signups are fine to aggregate. GMV / product–service money charts may sum NGN + GHS + other
-            units. Pick a country for clean revenue reading.
+            DAU, orders, and signups are fine to aggregate. GMV KPIs show — and money charts are hidden. Pick a country
+            for revenue in local currency.
           </p>
         </div>
       )}
@@ -225,8 +236,8 @@ export default function AnalyticsWarehousePage() {
             <KpiSparkCard
               icon={TrendingUp}
               label="GMV"
-              value={formatNaira(latest.gmvTotal)}
-              sparkData={chartData}
+              value={moneyLabel(latest.gmvTotal)}
+              sparkData={isGlobalView ? [] : chartData}
               sparkKey="gmv"
               accent="emerald"
             />
@@ -265,24 +276,27 @@ export default function AnalyticsWarehousePage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <ChartCard
-              title="Commerce mix"
-              subtitle="Product vs service GMV"
-              rangeLabel={rangeLabel}
-              accent="emerald"
-              loading={loading}
-              empty={!hasSeries}
-              height={300}
-            >
-              <StackedArea
-                data={chartData}
-                series={[
-                  { key: 'productGmv', name: 'Product GMV', color: '#059669' },
-                  { key: 'serviceGmv', name: 'Service GMV', color: '#0ea5e9' },
-                ]}
-                valueKind="money"
-              />
-            </ChartCard>
+            {!isGlobalView ? (
+              <ChartCard
+                title="Commerce mix"
+                subtitle="Product vs service GMV"
+                rangeLabel={rangeLabel}
+                accent="emerald"
+                loading={loading}
+                empty={!hasSeries}
+                height={300}
+              >
+                <StackedArea
+                  data={chartData}
+                  series={[
+                    { key: 'productGmv', name: 'Product GMV', color: '#059669' },
+                    { key: 'serviceGmv', name: 'Service GMV', color: '#0ea5e9' },
+                  ]}
+                  valueKind="money"
+                  currency={deskCurrency}
+                />
+              </ChartCard>
+            ) : null}
 
             <ChartCard
               title="Demand"

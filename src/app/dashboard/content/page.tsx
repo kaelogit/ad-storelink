@@ -10,9 +10,11 @@ import { Card, CardHeader, CardContent, Button, Input } from '../../../component
 import { TabsRoot, Tab } from '../../../components/ui'
 import { Megaphone, Image as ImageIcon, Send, Loader2, Trash2, Plus, Smartphone, Bell, CalendarDays } from 'lucide-react'
 import { AnnouncementsCalendarPanel } from '../../../components/admin/AnnouncementsCalendarPanel'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 export default function ContentStudio() {
   const supabase = createClient()
+  const { canWrite, loading: roleLoading } = useAdminRole()
   const [activeTab, setActiveTab] = useState<'broadcast' | 'banners' | 'calendar'>('broadcast')
 
   const [title, setTitle] = useState('')
@@ -34,78 +36,106 @@ export default function ContentStudio() {
 
   const requestBroadcastConfirm = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!canWrite) return
     if (!title?.trim() || !message?.trim()) return
     setPendingBroadcast({ title: title.trim(), message: message.trim(), segment })
   }
 
   const executeBroadcast = async () => {
-    if (!pendingBroadcast) return
+    if (!pendingBroadcast || !canWrite) return
     setBroadcasting(true)
     setFeedback({ tone: 'info', message: 'Sending broadcast...' })
-    const response = await fetch('/api/admin/content/broadcast', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pendingBroadcast),
-    })
-    setPendingBroadcast(null)
-    if (response.ok) {
-      setFeedback({ tone: 'success', message: 'Broadcast sent successfully.' })
-      setTitle('')
-      setMessage('')
-    } else {
-      const errorMessage = await parseApiError(response, 'Failed to send broadcast.')
-      setFeedback({ tone: 'error', message: errorMessage })
+    try {
+      const response = await fetch('/api/admin/content/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pendingBroadcast),
+      })
+      if (response.ok) {
+        setFeedback({ tone: 'success', message: 'Broadcast sent successfully.' })
+        setTitle('')
+        setMessage('')
+      } else {
+        const errorMessage = await parseApiError(response, 'Failed to send broadcast.')
+        setFeedback({ tone: 'error', message: errorMessage })
+      }
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to send broadcast.' })
+    } finally {
+      setPendingBroadcast(null)
+      setBroadcasting(false)
     }
-    setBroadcasting(false)
   }
 
   const fetchBanners = async () => {
     setBannerLoading(true)
-    const { data } = await supabase.from('banners').select('*').order('created_at', { ascending: false })
-    if (data) setBanners(data)
-    setBannerLoading(false)
+    try {
+      const { data, error } = await supabase.from('banners').select('*').order('created_at', { ascending: false })
+      if (error) {
+        setFeedback({ tone: 'error', message: error.message || 'Failed to load banners.' })
+        return
+      }
+      setBanners(data ?? [])
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load banners.' })
+    } finally {
+      setBannerLoading(false)
+    }
   }
 
   const createBanner = async () => {
+    if (!canWrite) return
     if (!newBannerUrl?.trim() || !newBannerTitle?.trim()) return
     setBannerLoading(true)
     setFeedback({ tone: 'info', message: 'Publishing banner...' })
-    const response = await fetch('/api/admin/content/banners', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageUrl: newBannerUrl.trim(), title: newBannerTitle.trim() }),
-    })
-    if (!response.ok) {
-      const errorMessage = await parseApiError(response, 'Failed to create banner.')
-      setFeedback({ tone: 'error', message: errorMessage })
+    try {
+      const response = await fetch('/api/admin/content/banners', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrl: newBannerUrl.trim(), title: newBannerTitle.trim() }),
+      })
+      if (!response.ok) {
+        const errorMessage = await parseApiError(response, 'Failed to create banner.')
+        setFeedback({ tone: 'error', message: errorMessage })
+        return
+      }
+      setFeedback({ tone: 'success', message: 'Banner published.' })
+      setNewBannerUrl('')
+      setNewBannerTitle('')
+      await fetchBanners()
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to create banner.' })
+    } finally {
       setBannerLoading(false)
-      return
     }
-    setFeedback({ tone: 'success', message: 'Banner published.' })
-    setNewBannerUrl('')
-    setNewBannerTitle('')
-    fetchBanners()
-    setBannerLoading(false)
   }
 
-  const requestDeleteBanner = (id: string, bannerTitle: string) => setPendingDeleteBanner({ id, title: bannerTitle })
+  const requestDeleteBanner = (id: string, bannerTitle: string) => {
+    if (!canWrite) return
+    setPendingDeleteBanner({ id, title: bannerTitle })
+  }
 
   const executeDeleteBanner = async () => {
-    if (!pendingDeleteBanner) return
+    if (!pendingDeleteBanner || !canWrite) return
     setFeedback({ tone: 'info', message: 'Removing banner...' })
-    const response = await fetch('/api/admin/content/banners', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bannerId: pendingDeleteBanner.id }),
-    })
-    setPendingDeleteBanner(null)
-    if (!response.ok) {
-      const errorMessage = await parseApiError(response, 'Failed to delete banner.')
-      setFeedback({ tone: 'error', message: errorMessage })
-      return
+    try {
+      const response = await fetch('/api/admin/content/banners', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bannerId: pendingDeleteBanner.id }),
+      })
+      if (!response.ok) {
+        const errorMessage = await parseApiError(response, 'Failed to delete banner.')
+        setFeedback({ tone: 'error', message: errorMessage })
+        return
+      }
+      setFeedback({ tone: 'success', message: 'Banner removed.' })
+      await fetchBanners()
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to delete banner.' })
+    } finally {
+      setPendingDeleteBanner(null)
     }
-    setFeedback({ tone: 'success', message: 'Banner removed.' })
-    fetchBanners()
   }
 
   return (
@@ -129,8 +159,15 @@ export default function ContentStudio() {
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
+      {!roleLoading && !canWrite && (
+        <ActionFeedback
+          tone="info"
+          message="Read-only: your role can view content but cannot send broadcasts or manage banners."
+        />
+      )}
+
       <ConfirmActionModal
-        open={pendingBroadcast !== null}
+        open={canWrite && pendingBroadcast !== null}
         title="Send push notification?"
         description={`This will send to ${pendingBroadcast?.segment ?? 'ALL'} users.`}
         impactSummary="Users will receive this notification on their devices. This action cannot be undone."
@@ -148,7 +185,7 @@ export default function ContentStudio() {
       </ConfirmActionModal>
 
       <ConfirmActionModal
-        open={pendingDeleteBanner !== null}
+        open={canWrite && pendingDeleteBanner !== null}
         title="Remove this banner?"
         description={pendingDeleteBanner ? `"${pendingDeleteBanner.title}" will be removed from the app.` : ''}
         impactSummary="The banner will no longer appear for users. You can add it again later."
@@ -158,9 +195,15 @@ export default function ContentStudio() {
         onConfirm={executeDeleteBanner}
       />
 
-      {activeTab === 'calendar' && <AnnouncementsCalendarPanel />}
+      {activeTab === 'calendar' && <AnnouncementsCalendarPanel canWrite={canWrite} />}
 
-      {activeTab === 'broadcast' && (
+      {activeTab === 'broadcast' && !canWrite && (
+        <Card className="border-dashed flex items-center justify-center py-16">
+          <p className="text-[var(--muted)]">Broadcasts are limited to non-analyst roles.</p>
+        </Card>
+      )}
+
+      {activeTab === 'broadcast' && canWrite && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
@@ -247,15 +290,17 @@ export default function ContentStudio() {
               <Card key={banner.id} className="overflow-hidden p-0">
                 <div className="group relative aspect-[3/1] bg-[var(--background)]">
                   <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-4">
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => requestDeleteBanner(banner.id, banner.title)}
-                    >
-                      <Trash2 className="h-4 w-4" /> Remove
-                    </Button>
-                  </div>
+                  {canWrite && (
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-4">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => requestDeleteBanner(banner.id, banner.title)}
+                      >
+                        <Trash2 className="h-4 w-4" /> Remove
+                      </Button>
+                    </div>
+                  )}
                   <div className="absolute bottom-3 left-3 rounded-lg bg-black/60 backdrop-blur px-3 py-1.5">
                     <p className="text-xs font-bold text-white">{banner.title}</p>
                   </div>
@@ -264,10 +309,11 @@ export default function ContentStudio() {
             ))}
             {banners.length === 0 && (
               <Card className="border-dashed flex items-center justify-center py-16">
-                <p className="text-[var(--muted)]">No banners yet. Add one below.</p>
+                <p className="text-[var(--muted)]">{canWrite ? 'No banners yet. Add one below.' : 'No banners yet.'}</p>
               </Card>
             )}
           </div>
+          {canWrite && (
           <Card className="lg:col-span-1 h-fit sticky top-6">
             <CardHeader>
               <span className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
@@ -302,6 +348,7 @@ export default function ContentStudio() {
               </Button>
             </CardContent>
           </Card>
+          )}
         </div>
       )}
     </div>

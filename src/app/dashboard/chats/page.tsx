@@ -147,7 +147,7 @@ export default function P2PChatViewerPage() {
       setFeedback({
         tone: 'info',
         message:
-          'No threads for this country filter. Nigeria should show threads where buyer or seller has NG — try Lookup with thefirstshopper if still empty.',
+          'No threads for this country filter. Nigeria should show threads where buyer or seller has NG. Try Lookup with thefirstshopper if still empty.',
       })
       return
     }
@@ -224,7 +224,7 @@ export default function P2PChatViewerPage() {
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
         title="P2P Chat Viewer"
-        subtitle="Read-only buyer–seller threads for trust & safety. Recent list is country-scoped; every browse, search, and transcript load is audit-logged."
+        subtitle="Read-only buyer-seller threads for trust & safety. Recent list is country-scoped; every browse, search, and transcript load is audit-logged."
         actions={
           <DeskLinkPills
             links={[
@@ -406,11 +406,11 @@ export default function P2PChatViewerPage() {
                         </div>
                       </DataTableCell>
                       <DataTableCell>
-                        <p className="line-clamp-2 text-xs text-gray-700">{row.last_message || '—'}</p>
+                        <p className="line-clamp-2 text-xs text-gray-700">{row.last_message || '-'}</p>
                       </DataTableCell>
                       <DataTableCell>
                         <p className="text-xs text-gray-600">
-                          {row.updated_at ? new Date(row.updated_at).toLocaleString() : '—'}
+                          {row.updated_at ? new Date(row.updated_at).toLocaleString() : '-'}
                         </p>
                       </DataTableCell>
                       <DataTableCell>
@@ -496,7 +496,7 @@ export default function P2PChatViewerPage() {
               <DisputeChatTranscriptPanel
                 key={selectedRow.chat_id}
                 title="P2P chat transcript"
-                description="Read-only thread. Load messages only when investigating this case — each load is written to the audit log."
+                description="Read-only thread. Load messages only when investigating this case. Each load is written to the audit log."
                 conversationId={selectedRow.chat_id}
                 entityId={selectedRow.chat_id}
                 endpoint="/api/admin/chats/transcript"
@@ -536,8 +536,8 @@ function PartyLink({
       <UserRound className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
       <div className="min-w-0">
         <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{role}</p>
-        <p className="font-semibold text-gray-900 truncate">{name || '—'}</p>
-        <p className="text-xs text-gray-500">@{slug || '—'}</p>
+        <p className="font-semibold text-gray-900 truncate">{name || '-'}</p>
+        <p className="text-xs text-gray-500">@{slug || '-'}</p>
         {id ? (
           <Link
             href={`/dashboard/users?q=${encodeURIComponent(id)}`}

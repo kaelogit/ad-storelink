@@ -20,6 +20,7 @@ import { ActionReasonModal } from '../../../../components/admin/ActionReasonModa
 import { ActionFeedback } from '../../../../components/admin/ActionFeedback'
 import { parseApiError } from '../../../../utils/http'
 import { AdminAvatar } from '../../../../components/admin/AdminAvatar'
+import { useAdminRole } from '../../../../hooks/useAdminRole'
 
 const STORE_APP_BASE = process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng'
 
@@ -79,6 +80,10 @@ export default function AdminServiceListingDetailPage() {
   const router = useRouter()
   const id = typeof params?.id === 'string' ? params.id : ''
   const supabase = createClient()
+  const { role } = useAdminRole()
+  const canModerate =
+    role === 'super_admin' || role === 'moderator' || role === 'support' || role === 'finance'
+  const canUnlock = role === 'super_admin' || role === 'moderator' || role === 'support'
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -129,7 +134,7 @@ export default function AdminServiceListingDetailPage() {
   const sellerAreas = useMemo(() => asStringArray(seller?.service_areas), [seller?.service_areas])
 
   const locationLine = useMemo(() => {
-    if (!listing && !seller) return '—'
+    if (!listing && !seller) return '-'
     const city = seller?.location_city?.trim() || null
     const state = seller?.location_state?.trim() || null
     const country =
@@ -137,7 +142,7 @@ export default function AdminServiceListingDetailPage() {
       (typeof listing?.location_country_code === 'string' ? listing.location_country_code.trim() : null) ||
       null
     const parts = [city, state, country].filter(Boolean)
-    return parts.length ? parts.join(', ') : '—'
+    return parts.length ? parts.join(', ') : '-'
   }, [listing, seller])
 
   const copyText = async (value: string, label: string) => {
@@ -297,8 +302,8 @@ export default function AdminServiceListingDetailPage() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Meta label="From price" value={fromMinor(listing.hero_price_min, listing.currency_code) + '+'} />
-                  <Meta label="Currency" value={String(listing.currency_code || '—')} />
-                  <Meta label="Delivery type" value={String(listing.delivery_type || listing.location_type || '—')} />
+                  <Meta label="Currency" value={String(listing.currency_code || '-')} />
+                  <Meta label="Delivery type" value={String(listing.delivery_type || listing.location_type || '-')} />
                   <Meta label="Tagged posts" value={String(linkedPostCount)} />
                   <Meta label="Published" value={formatDate(listing.published_at)} />
                   <Meta label="Updated" value={formatDate(listing.updated_at)} />
@@ -310,7 +315,7 @@ export default function AdminServiceListingDetailPage() {
                   </p>
                   <p className="mt-1 text-sm font-semibold text-gray-900">{locationLine}</p>
                   <p className="mt-1 text-xs text-gray-600">
-                    Listing country: {String(listing.location_country_code || '—')}
+                    Listing country: {String(listing.location_country_code || '-')}
                     {listing.location_type ? ` · location_type: ${String(listing.location_type)}` : ''}
                     {seller.service_location_type ? ` · seller type: ${seller.service_location_type}` : ''}
                   </p>
@@ -336,18 +341,22 @@ export default function AdminServiceListingDetailPage() {
 
               <div className="lg:w-72 border-t lg:border-t-0 lg:border-l border-gray-100 bg-gray-50/80 p-5 space-y-3">
                 <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Moderation</p>
-                <button
-                  type="button"
-                  onClick={() => setModerateIntent(isActive ? 'deactivate' : 'activate')}
-                  className={`w-full rounded-lg px-3 py-2 text-xs font-bold ${
-                    isActive
-                      ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
-                      : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                  }`}
-                >
-                  {isActive ? 'Deactivate listing' : 'Activate listing'}
-                </button>
-                {contentLockedAt ? (
+                {canModerate ? (
+                  <button
+                    type="button"
+                    onClick={() => setModerateIntent(isActive ? 'deactivate' : 'activate')}
+                    className={`w-full rounded-lg px-3 py-2 text-xs font-bold ${
+                      isActive
+                        ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                        : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    }`}
+                  >
+                    {isActive ? 'Deactivate listing' : 'Activate listing'}
+                  </button>
+                ) : (
+                  <p className="text-[11px] text-gray-500">Read-only for this role</p>
+                )}
+                {contentLockedAt && canUnlock ? (
                   <button
                     type="button"
                     onClick={() => setUnlockIntent(true)}
@@ -356,7 +365,9 @@ export default function AdminServiceListingDetailPage() {
                     Force unlock content
                   </button>
                 ) : (
-                  <p className="text-[11px] text-gray-500">Content lock: none</p>
+                  <p className="text-[11px] text-gray-500">
+                    {contentLockedAt ? 'Unlock requires moderator/support/super admin.' : 'Content lock: none'}
+                  </p>
                 )}
                 <p className="text-[11px] text-gray-500 pt-2">
                   Created {formatDate(listing.created_at)}
@@ -427,7 +438,7 @@ export default function AdminServiceListingDetailPage() {
                 <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">Policies & booking</h3>
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                   <Detail label="Deposit enabled" value={listing.deposit_enabled ? 'Yes' : 'No'} />
-                  <Detail label="Deposit mode" value={String(listing.deposit_mode || '—')} />
+                  <Detail label="Deposit mode" value={String(listing.deposit_mode || '-')} />
                   <Detail
                     label="Deposit"
                     value={
@@ -435,7 +446,7 @@ export default function AdminServiceListingDetailPage() {
                         ? fromMinor(listing.deposit_minor, listing.currency_code)
                         : listing.deposit_percent != null
                           ? `${listing.deposit_percent}%`
-                          : '—'
+                          : '-'
                     }
                   />
                   <Detail
@@ -443,13 +454,13 @@ export default function AdminServiceListingDetailPage() {
                     value={
                       listing.travel_fee_minor != null
                         ? fromMinor(listing.travel_fee_minor, listing.currency_code)
-                        : '—'
+                        : '-'
                     }
                   />
-                  <Detail label="Cancellation" value={String(listing.cancellation_policy || '—')} />
-                  <Detail label="Deposit policy" value={String(listing.deposit_policy || '—')} />
+                  <Detail label="Cancellation" value={String(listing.cancellation_policy || '-')} />
+                  <Detail label="Deposit policy" value={String(listing.deposit_policy || '-')} />
                   <Detail label="Allows booking requests" value={listing.allows_booking_requests ? 'Yes' : 'No'} />
-                  <Detail label="Slug" value={String(listing.slug || '—')} mono />
+                  <Detail label="Slug" value={String(listing.slug || '-')} mono />
                 </dl>
               </section>
             </div>
@@ -462,9 +473,9 @@ export default function AdminServiceListingDetailPage() {
                 <div className="flex items-start gap-3">
                   <AdminAvatar size="md" src={seller.logo_url} name={seller.display_name || 'Seller'} />
                   <div className="min-w-0">
-                    <p className="font-semibold text-gray-900">{seller.display_name ?? '—'}</p>
-                    <p className="text-sm text-gray-600 mt-0.5 truncate">{seller.email ?? '—'}</p>
-                    <p className="text-sm text-gray-500 mt-1">@{seller.slug ?? '—'}</p>
+                    <p className="font-semibold text-gray-900">{seller.display_name ?? '-'}</p>
+                    <p className="text-sm text-gray-600 mt-0.5 truncate">{seller.email ?? '-'}</p>
+                    <p className="text-sm text-gray-500 mt-1">@{seller.slug ?? '-'}</p>
                   </div>
                 </div>
                 {seller.phone ? (
@@ -565,7 +576,7 @@ function Detail({ label, value, mono }: { label: string; value: string; mono?: b
 }
 
 function formatDate(v: unknown) {
-  if (v == null || typeof v !== 'string') return '—'
+  if (v == null || typeof v !== 'string') return '-'
   try {
     return new Date(v).toLocaleString()
   } catch {

@@ -14,7 +14,7 @@ export const QA_RUNBOOKS: QaRunbook[] = [
     description: 'Pre-release checklist across auth, users, orders, finance, support, and content.',
     repoPath: 'admin-storelink/docs/STAGING_QA_RUNBOOK.md',
     highlights: [
-      'Role matrix — no unauthorized module access',
+      'Role matrix: no unauthorized module access',
       'Order lookup + force complete/cancel with audit',
       'Dispute verdict + payout approve/reject',
       'Support ticket reply + resolve',

@@ -11,6 +11,8 @@ export { Donut } from './Donut'
 export type { DonutSlice } from './Donut'
 export { KpiSparkCard } from './KpiSparkCard'
 export {
+  formatMoney,
+  formatMoneyCompact,
   formatNaira,
   formatNairaCompact,
   formatCount,

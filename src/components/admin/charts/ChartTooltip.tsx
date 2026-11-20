@@ -1,6 +1,6 @@
 'use client'
 
-import { formatCount, formatNaira, formatPct, shortDay } from './format'
+import { formatCount, formatMoney, formatPct, shortDay } from './format'
 
 type PayloadItem = {
   name?: string
@@ -16,6 +16,7 @@ type Props = {
   valueKind?: 'money' | 'count' | 'pct' | 'auto'
   moneyKeys?: string[]
   pctKeys?: string[]
+  currency?: string
 }
 
 export function ChartTooltip({
@@ -25,16 +26,17 @@ export function ChartTooltip({
   valueKind = 'auto',
   moneyKeys = [],
   pctKeys = [],
+  currency = 'NGN',
 }: Props) {
   if (!active || !payload?.length) return null
 
   const formatValue = (item: PayloadItem) => {
     const key = String(item.dataKey ?? item.name ?? '')
     const raw = Number(item.value ?? 0)
-    if (valueKind === 'money' || moneyKeys.includes(key)) return formatNaira(raw)
+    if (valueKind === 'money' || moneyKeys.includes(key)) return formatMoney(raw, currency)
     if (valueKind === 'pct' || pctKeys.includes(key)) return formatPct(raw)
     if (valueKind === 'count') return formatCount(raw)
-    if (/gmv|spend|revenue|ecpm|money|amount/i.test(key)) return formatNaira(raw)
+    if (/gmv|spend|revenue|ecpm|money|amount/i.test(key)) return formatMoney(raw, currency)
     if (/ctr|rate|pct|percent/i.test(key)) return formatPct(raw)
     return formatCount(raw)
   }

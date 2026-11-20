@@ -10,6 +10,7 @@ import { ArrowLeft, ExternalLink, Loader2, MapPin, User } from 'lucide-react'
 import { ActionReasonModal } from '../../../../components/admin/ActionReasonModal'
 import { ActionFeedback } from '../../../../components/admin/ActionFeedback'
 import { parseApiError } from '../../../../utils/http'
+import { useAdminRole } from '../../../../hooks/useAdminRole'
 
 const STORE_APP_BASE = process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng'
 
@@ -29,6 +30,10 @@ export default function AdminProductDetailPage() {
   const router = useRouter()
   const id = typeof params?.id === 'string' ? params.id : ''
   const supabase = createClient()
+  const { role } = useAdminRole()
+  const canModerate =
+    role === 'super_admin' || role === 'moderator' || role === 'support' || role === 'finance'
+  const canUnlock = role === 'super_admin' || role === 'moderator' || role === 'support'
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -72,7 +77,10 @@ export default function AdminProductDetailPage() {
   const linkedPostCount =
     typeof product?.linked_post_count === 'number' ? product.linked_post_count : 0
   const slug = typeof product?.slug === 'string' ? product.slug : ''
-  const publicUrl = slug ? `${STORE_APP_BASE.replace(/\/$/, '')}/product/${slug}` : id ? `${STORE_APP_BASE.replace(/\/$/, '')}/product/${id}` : ''
+  // Public web product path is /p/[slug] (not /product/).
+  const publicUrl = slug
+    ? `${STORE_APP_BASE.replace(/\/$/, '')}/p/${encodeURIComponent(slug)}`
+    : ''
 
   const runModeration = async ({ category, reason }: { category: string; reason: string }) => {
     if (!product?.id || !moderateIntent) return
@@ -189,18 +197,22 @@ export default function AdminProductDetailPage() {
           <div className="lg:col-span-2 space-y-4">
             <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-gray-500">Moderation:</span>
-              <button
-                type="button"
-                onClick={() => setModerateIntent(isActive ? 'deactivate' : 'activate')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
-                  isActive
-                    ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
-                    : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                }`}
-              >
-                {isActive ? 'Deactivate listing' : 'Activate listing'}
-              </button>
-              {contentLockedAt ? (
+              {canModerate ? (
+                <button
+                  type="button"
+                  onClick={() => setModerateIntent(isActive ? 'deactivate' : 'activate')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+                    isActive
+                      ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                      : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  }`}
+                >
+                  {isActive ? 'Deactivate listing' : 'Activate listing'}
+                </button>
+              ) : (
+                <span className="text-xs text-gray-400">Read-only for this role</span>
+              )}
+              {contentLockedAt && canUnlock ? (
                 <button
                   type="button"
                   onClick={() => setUnlockIntent(true)}
@@ -214,16 +226,16 @@ export default function AdminProductDetailPage() {
               <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">Product</h3>
               <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <Detail label="ID" value={String(product.id ?? '')} mono />
-                <Detail label="Slug" value={String(product.slug ?? '—')} mono />
+                <Detail label="Slug" value={String(product.slug ?? '-')} mono />
                 <Detail label="Active" value={product.is_active ? 'Yes' : 'No'} />
-                <Detail label="Price" value={String(product.price ?? '—')} />
-                <Detail label="Currency" value={String(product.currency_code ?? '—')} />
-                <Detail label="Stock" value={String(product.stock_quantity ?? '—')} />
+                <Detail label="Price" value={String(product.price ?? '-')} />
+                <Detail label="Currency" value={String(product.currency_code ?? '-')} />
+                <Detail label="Stock" value={String(product.stock_quantity ?? '-')} />
                 <Detail label="Content locked" value={contentLockedAt ? formatDate(contentLockedAt) : 'No'} />
                 <Detail label="Tagged posts" value={String(linkedPostCount)} />
                 <Detail label="Published" value={formatDate(product.published_at)} />
                 <Detail label="First linked" value={formatDate(product.first_linked_at)} />
-                <Detail label="Location country" value={String(product.location_country ?? '—')} />
+                <Detail label="Location country" value={String(product.location_country ?? '-')} />
                 <Detail label="Created" value={formatDate(product.created_at)} />
               </dl>
               {typeof product.description === 'string' && product.description.trim() ? (
@@ -262,14 +274,17 @@ export default function AdminProductDetailPage() {
               <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4 flex items-center gap-2">
                 <User size={14} /> Seller
               </h3>
-              <p className="font-semibold text-gray-900">{seller.display_name ?? '—'}</p>
-              <p className="text-sm text-gray-600 mt-1">{seller.email ?? '—'}</p>
-              <p className="text-sm text-gray-500 mt-2">@{seller.slug ?? '—'}</p>
+              <p className="font-semibold text-gray-900">{seller.display_name ?? '-'}</p>
+              <p className="text-sm text-gray-600 mt-1">{seller.email ?? '-'}</p>
+              <p className="text-sm text-gray-500 mt-2">@{seller.slug ?? '-'}</p>
               <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
                 <MapPin size={14} />
-                {seller.location_country_code ?? '—'}
+                {seller.location_country_code ?? '-'}
               </div>
-              <Link href="/dashboard/users" className="mt-4 inline-block text-sm font-semibold text-blue-600 hover:underline">
+              <Link
+                href={`/dashboard/users?q=${encodeURIComponent(seller.id)}`}
+                className="mt-4 inline-block text-sm font-semibold text-blue-600 hover:underline"
+              >
                 Open Users directory →
               </Link>
             </div>
@@ -324,7 +339,7 @@ function Detail({ label, value, mono }: { label: string; value: string; mono?: b
 }
 
 function formatDate(v: unknown) {
-  if (v == null || typeof v !== 'string') return '—'
+  if (v == null || typeof v !== 'string') return '-'
   try {
     return new Date(v).toLocaleString()
   } catch {

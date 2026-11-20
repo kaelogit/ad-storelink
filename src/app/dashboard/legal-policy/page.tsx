@@ -8,9 +8,10 @@ import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { parseApiError } from '../../../utils/http'
-import { createClient } from '../../../utils/supabase/client'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 import { SUPPORTED_COUNTRIES } from '../../../constants/SupportedCountries'
-import type { AdminRole } from '../../../types/admin'
+
+const STORE_APP_BASE = (process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng').replace(/\/$/, '')
 
 type PolicyType = 'terms' | 'privacy' | 'service_policies'
 type PolicySurface = 'app' | 'web' | 'storefront'
@@ -54,10 +55,9 @@ const REASON_CATEGORIES = [
 ]
 
 export default function LegalPolicyPage() {
-  const supabase = createClient()
-  const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
+  const { role: adminRole } = useAdminRole()
   const [desk, setDesk] = useState<DeskPayload | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [pendingPublish, setPendingPublish] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
@@ -73,18 +73,6 @@ export default function LegalPolicyPage() {
 
   const canEdit = adminRole === 'super_admin' || adminRole === 'content'
   const effectiveCountry = policyType === 'service_policies' ? 'GLOBAL' : countryCode
-
-  useEffect(() => {
-    let mounted = true
-    const loadRole = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !mounted) return
-      const { data } = await supabase.from('admin_users').select('role').eq('id', user.id).maybeSingle()
-      if (mounted && data?.role) setAdminRole(data.role as AdminRole)
-    }
-    void loadRole()
-    return () => { mounted = false }
-  }, [supabase])
 
   const applyDeskToDraft = useCallback((payload: DeskPayload | null) => {
     const current = payload?.current
@@ -102,22 +90,30 @@ export default function LegalPolicyPage() {
 
   const loadDesk = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      policyType,
-      country: effectiveCountry,
-      surface,
-    })
-    const response = await fetch(`/api/admin/legal-policy/desk?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load legal policy desk.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({
+        policyType,
+        country: effectiveCountry,
+        surface,
+      })
+      const response = await fetch(`/api/admin/legal-policy/desk?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load legal policy desk.')
+        setFeedback({ tone: 'error', message: msg })
+        applyDeskToDraft(null)
+        return
+      }
+      const payload = (await response.json()) as DeskPayload
+      applyDeskToDraft(payload)
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load legal policy desk.',
+      })
       applyDeskToDraft(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json()) as DeskPayload
-    applyDeskToDraft(payload)
-    setLoading(false)
   }, [applyDeskToDraft, effectiveCountry, policyType, surface])
 
   useEffect(() => {
@@ -125,53 +121,56 @@ export default function LegalPolicyPage() {
   }, [loadDesk])
 
   const publicUrl = useMemo(() => {
-    if (policyType === 'service_policies') return 'https://storelink.ng/legal/service-policies'
+    if (policyType === 'service_policies') return `${STORE_APP_BASE}/legal/service-policies`
     const path = policyType === 'terms' ? 'terms' : 'privacy'
-    return `https://storelink.ng/${path}/${effectiveCountry.toLowerCase()}`
+    return `${STORE_APP_BASE}/${path}/${effectiveCountry.toLowerCase()}`
   }, [effectiveCountry, policyType])
 
   const submitPublish = async ({ category, reason }: { category: string; reason: string }) => {
     setSubmitting(true)
-    let parsedBody: unknown = bodyDraft
-    if (format === 'structured_json') {
-      try {
-        parsedBody = JSON.parse(bodyDraft)
-      } catch {
-        setFeedback({ tone: 'error', message: 'Body must be valid JSON for structured_json format.' })
-        setSubmitting(false)
-        return
+    try {
+      let parsedBody: unknown = bodyDraft
+      if (format === 'structured_json') {
+        try {
+          parsedBody = JSON.parse(bodyDraft)
+        } catch {
+          throw new Error('Body must be valid JSON for structured_json format.')
+        }
       }
-    }
 
-    const response = await fetch('/api/admin/legal-policy/publish', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': `legal-policy-${policyType}-${effectiveCountry}-${Date.now()}`,
-      },
-      body: JSON.stringify({
-        policyType,
-        countryCode: effectiveCountry,
-        surface,
-        format,
-        title: titleDraft,
-        effectiveLabel: effectiveLabelDraft,
-        intro: introDraft,
-        body: parsedBody,
-        reason: `[${category}] ${reason}`,
-      }),
-    })
+      const response = await fetch('/api/admin/legal-policy/publish', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `legal-policy-${policyType}-${effectiveCountry}-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          policyType,
+          countryCode: effectiveCountry,
+          surface,
+          format,
+          title: titleDraft,
+          effectiveLabel: effectiveLabelDraft,
+          intro: introDraft,
+          body: parsedBody,
+          reason: `[${category}] ${reason}`,
+        }),
+      })
 
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to publish legal policy.')
-      setFeedback({ tone: 'error', message: msg })
+      if (!response.ok) {
+        // Thrown so the reason modal shows the failure inline and stays open.
+        throw new Error(await parseApiError(response, 'Failed to publish legal policy.'))
+      }
+
+      setPendingPublish(false)
+      setFeedback({ tone: 'success', message: 'Legal policy published as a new version.' })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to publish legal policy.'
+      setFeedback({ tone: 'error', message })
+      throw err instanceof Error ? err : new Error(message)
+    } finally {
       setSubmitting(false)
-      return
     }
-
-    setPendingPublish(false)
-    setSubmitting(false)
-    setFeedback({ tone: 'success', message: 'Legal policy published as a new version.' })
     await loadDesk()
   }
 

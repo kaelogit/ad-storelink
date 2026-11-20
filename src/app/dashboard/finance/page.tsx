@@ -24,10 +24,15 @@ import {
 } from 'lucide-react'
 import { AdminAvatar } from '../../../components/admin/AdminAvatar'
 import { useAdminRole } from '../../../hooks/useAdminRole'
+import { useCountryFilter } from '../../../contexts/CountryFilterContext'
+import { currencyForCountryCode } from '../../../constants/SupportedCountries'
+import { formatMoney } from '../../../components/admin/charts/format'
 
 export default function FinanceCenter() {
   const supabase = createClient()
   const { canWrite } = useAdminRole()
+  const { countryCode, isGlobalView } = useCountryFilter()
+  const deskCurrency = currencyForCountryCode(isGlobalView ? 'NG' : countryCode)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'tribunal' | 'watchtower'>('tribunal')
 
@@ -57,37 +62,56 @@ export default function FinanceCenter() {
   }
 
   const fetchStats = async () => {
-    const { data } = await supabase.rpc('get_finance_overview')
+    const { data, error } = await supabase.rpc('get_finance_overview')
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load finance overview.' })
+      return
+    }
     if (data) setStats(data)
   }
 
   const fetchDisputes = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('disputes')
       .select(
         '*, orders(total_amount, currency_code, buyer:buyer_id(display_name, logo_url), seller:seller_id(display_name, logo_url))',
       )
       .eq('status', 'open')
       .order('created_at', { ascending: false })
-    if (data) setDisputes(data)
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load product disputes.' })
+      setDisputes([])
+      return
+    }
+    setDisputes(data ?? [])
   }
   const fetchServiceDisputes = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('service_orders')
       .select('id, amount_minor, currency_code, dispute_reason, dispute_state, updated_at, buyer:buyer_id(display_name, logo_url), seller:seller_id(display_name, logo_url)')
       .in('dispute_state', ['under_review', 'open', 'disputed'])
       .order('updated_at', { ascending: false })
       .limit(100)
-    if (data) setServiceDisputes(data)
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load service disputes.' })
+      setServiceDisputes([])
+      return
+    }
+    setServiceDisputes(data ?? [])
   }
 
   const fetchPayouts = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('payouts')
-      .select('*, profiles(display_name, bank_name, account_number, logo_url)')
+      .select('*, profiles(display_name, bank_name, account_number, logo_url, currency_code)')
       .eq('status', 'pending')
       .order('amount', { ascending: false })
-    if (data) setPayouts(data)
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load pending payouts.' })
+      setPayouts([])
+      return
+    }
+    setPayouts(data ?? [])
   }
 
   const processPayout = async ({
@@ -128,8 +152,14 @@ export default function FinanceCenter() {
   const openCourtroom = async (disputeId: string) => {
     setCaseLoading(true)
     setSelectedCase(null)
-    const { data } = await supabase.rpc('get_dispute_dossier', { p_dispute_id: disputeId })
-    if (data) setSelectedCase(data)
+    const { data, error } = await supabase.rpc('get_dispute_dossier', { p_dispute_id: disputeId })
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to open dispute dossier.' })
+    } else if (data) {
+      setSelectedCase(data)
+    } else {
+      setFeedback({ tone: 'error', message: 'Dispute dossier returned empty.' })
+    }
     setCaseLoading(false)
   }
 
@@ -217,8 +247,12 @@ export default function FinanceCenter() {
               <Landmark className="h-4 w-4" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-foreground">₦{Number(stats.escrow_balance ?? 0).toLocaleString()}</p>
-          <p className="text-xs text-(--muted) mt-1">Funds currently locked in trust</p>
+          <p className="text-2xl font-bold text-foreground">
+            {isGlobalView ? '—' : formatMoney(Number(stats.escrow_balance ?? 0), deskCurrency)}
+          </p>
+          <p className="text-xs text-(--muted) mt-1">
+            {isGlobalView ? 'Select a country for escrow totals' : 'Funds currently locked in trust'}
+          </p>
         </Card>
         <Card className="p-5">
           <div className="flex justify-between items-center mb-2">
@@ -227,14 +261,18 @@ export default function FinanceCenter() {
               <TrendingUp className="h-4 w-4" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-foreground">₦{Number(stats.pending_payouts ?? 0).toLocaleString()}</p>
+          <p className="text-2xl font-bold text-foreground">
+            {isGlobalView ? '—' : formatMoney(Number(stats.pending_payouts ?? 0), deskCurrency)}
+          </p>
           <p className="text-xs text-(--muted) mt-1">{stats.payout_count ?? 0} requests waiting</p>
         </Card>
         <Card className="p-5 bg-foreground text-background border-0">
           <div className="flex justify-between items-center">
             <div>
-              <span className="text-xs font-bold uppercase tracking-wider opacity-80">System Health</span>
-              <p className="text-lg font-bold mt-1">Operational</p>
+              <span className="text-xs font-bold uppercase tracking-wider opacity-80">Open queues</span>
+              <p className="text-lg font-bold mt-1">
+                {disputes.length + serviceDisputes.length} disputes · {payouts.length} payouts
+              </p>
             </div>
             <div className="h-10 w-10 rounded-full bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center">
               <CheckCircle className="h-5 w-5 text-emerald-400" />
@@ -283,8 +321,11 @@ export default function FinanceCenter() {
                       />
                       <span>
                         {dispute.orders?.buyer?.display_name || 'Buyer'} vs{' '}
-                        {dispute.orders?.seller?.display_name || 'Seller'} · ₦
-                        {dispute.orders?.total_amount ?? 0}
+                        {dispute.orders?.seller?.display_name || 'Seller'} ·{' '}
+                        {formatMoney(
+                          Number(dispute.orders?.total_amount ?? 0),
+                          String(dispute.orders?.currency_code || deskCurrency),
+                        )}
                       </span>
                     </span>
                     <span className="text-[10px] text-(--muted)">{new Date(dispute.created_at).toLocaleDateString()}</span>
@@ -346,7 +387,13 @@ export default function FinanceCenter() {
                       <span className="font-semibold text-foreground flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 text-amber-500" /> Dispute #{selectedCase.dispute_id?.slice(0, 8)}
                       </span>
-                      <Badge tone="neutral">Escrow: ₦{selectedCase.amount_held}</Badge>
+                      <Badge tone="neutral">
+                        Escrow:{' '}
+                        {formatMoney(
+                          Number(selectedCase.amount_held ?? 0),
+                          String(selectedCase.currency_code || deskCurrency),
+                        )}
+                      </Badge>
                     </CardHeader>
                     <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-x divide-(--border) overflow-hidden min-h-0">
                       <div className="p-4 overflow-y-auto">
@@ -401,7 +448,7 @@ export default function FinanceCenter() {
                           </Button>
                         </>
                       ) : (
-                        <p className="w-full text-center text-xs text-(--muted)">Analyst view — verdict actions hidden</p>
+                        <p className="w-full text-center text-xs text-(--muted)">Analyst view. Verdict actions hidden</p>
                       )}
                     </div>
                   </>
@@ -452,12 +499,17 @@ export default function FinanceCenter() {
                         </div>
                       </DataTableCell>
                       <DataTableCell className="text-xs">
-                        <p className="font-mono text-foreground">{payout.profiles?.account_number ?? '—'}</p>
-                        <p className="text-(--muted)">{payout.profiles?.bank_name ?? '—'}</p>
+                        <p className="font-mono text-foreground">{payout.profiles?.account_number ?? '-'}</p>
+                        <p className="text-(--muted)">{payout.profiles?.bank_name ?? '-'}</p>
                       </DataTableCell>
                       <DataTableCell>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-foreground">₦{Number(payout.amount).toLocaleString()}</span>
+                          <span className="font-semibold text-foreground">
+                            {formatMoney(
+                              Number(payout.amount ?? 0),
+                              String(payout.currency_code || payout.profiles?.currency_code || deskCurrency),
+                            )}
+                          </span>
                           {isHighValue && (
                             <Badge tone="danger" className="flex items-center gap-1">
                               <AlertTriangle className="h-3 w-3" /> High value

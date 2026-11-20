@@ -12,6 +12,7 @@ import {
   DualAxisLine,
   KpiSparkCard,
   formatCount,
+  formatMoney,
 } from '../../../../components/admin/charts'
 import {
   DataTable,
@@ -23,7 +24,10 @@ import {
 } from '../../../../components/ui/DataTable'
 import { parseApiError } from '../../../../utils/http'
 import { useCountryFilter } from '../../../../contexts/CountryFilterContext'
-import { ALL_COUNTRIES_CODE } from '../../../../constants/SupportedCountries'
+import { ALL_COUNTRIES_CODE, currencyForCountryCode } from '../../../../constants/SupportedCountries'
+import { allowedRolesForPath } from '../../../../constants/adminNavigation'
+import { useAdminRole } from '../../../../hooks/useAdminRole'
+import type { AdminRole } from '../../../../types/admin'
 import { Eye, MousePointerClick, Wallet, Gauge } from 'lucide-react'
 
 type Metrics = {
@@ -65,44 +69,57 @@ const PLACEMENTS = [
   { value: 'home_card', label: 'Home' },
 ] as const
 
-function moneyMinor(minor: number | undefined | null) {
-  const main = Number(minor || 0) / 100
-  return new Intl.NumberFormat('en-NG', {
-    style: 'currency',
-    currency: 'NGN',
-    maximumFractionDigits: 0,
-  }).format(main)
-}
-
 export default function AdsReportingPage() {
   const { countryCode } = useCountryFilter()
+  const { role } = useAdminRole()
+  const isGlobalView = countryCode === ALL_COUNTRIES_CODE
+  const deskCurrency = currencyForCountryCode(isGlobalView ? 'NG' : countryCode)
+  const canOpenPath = (href: string) => {
+    const allowed = allowedRolesForPath(href)
+    if (!allowed || !role) return false
+    return allowed.includes(role as AdminRole)
+  }
+
+  const moneyLabel = (minor: number | undefined | null) => {
+    if (isGlobalView) return '—'
+    return formatMoney(Number(minor || 0) / 100, deskCurrency)
+  }
+
   const [payload, setPayload] = useState<WarehousePayload | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [days, setDays] = useState<number>(30)
   const [placement, setPlacement] = useState<string>('ALL')
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(
     null,
   )
 
-  const countryParam = countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode
+  const countryParam = isGlobalView ? 'ALL' : countryCode
 
   const load = useCallback(async () => {
     setLoading(true)
     setFeedback(null)
-    const params = new URLSearchParams({
-      country: countryParam,
-      days: String(days),
-      placement,
-    })
-    const res = await fetch(`/api/admin/ads/warehouse?${params.toString()}`)
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load ads warehouse.') })
+    try {
+      const params = new URLSearchParams({
+        country: countryParam,
+        days: String(days),
+        placement,
+      })
+      const res = await fetch(`/api/admin/ads/warehouse?${params.toString()}`)
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load ads warehouse.') })
+        setPayload(null)
+        return
+      }
+      setPayload(await res.json())
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load ads warehouse.',
+      })
       setPayload(null)
+    } finally {
       setLoading(false)
-      return
     }
-    setPayload(await res.json())
-    setLoading(false)
   }, [countryParam, days, placement])
 
   useEffect(() => {
@@ -139,12 +156,14 @@ export default function AdsReportingPage() {
         subtitle="Daily Boost warehouse: spend, billable views, clicks, eCPM, conversions. Cron at 01:30 UTC."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Link
-              href="/dashboard/ads"
-              className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
-            >
-              Campaigns desk
-            </Link>
+            {canOpenPath('/dashboard/ads') ? (
+              <Link
+                href="/dashboard/ads"
+                className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
+              >
+                Campaigns desk
+              </Link>
+            ) : null}
             <a
               href={exportHref}
               className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
@@ -165,6 +184,12 @@ export default function AdsReportingPage() {
       />
 
       {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
+
+      {isGlobalView ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          All-countries view mixes currencies — money KPIs show as —. Pick a country for local currency.
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {DAY_OPTIONS.map((d) => (
@@ -205,7 +230,7 @@ export default function AdsReportingPage() {
           <KpiSparkCard
             icon={Wallet}
             label="Spend"
-            value={moneyMinor(latest.spentMinor)}
+            value={moneyLabel(latest.spentMinor)}
             sparkData={chartData}
             sparkKey="spend"
             accent="emerald"
@@ -221,7 +246,11 @@ export default function AdsReportingPage() {
           <KpiSparkCard
             icon={Gauge}
             label="eCPM"
-            value={latest.ecpm != null ? moneyMinor(Math.round(Number(latest.ecpm))) : '—'}
+            value={
+              latest.ecpm != null && !isGlobalView
+                ? moneyLabel(Math.round(Number(latest.ecpm)))
+                : '—'
+            }
             sparkData={chartData}
             sparkKey="ecpm"
             accent="amber"
@@ -231,17 +260,17 @@ export default function AdsReportingPage() {
 
       {latest ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Kpi label="Package revenue" value={moneyMinor(latest.revenueMinor)} />
+          <Kpi label="Package revenue" value={moneyLabel(latest.revenueMinor)} />
           <Kpi label="Cart adds" value={Number(latest.addToCarts || 0).toLocaleString()} />
           <Kpi label="Orders" value={Number(latest.purchases || 0).toLocaleString()} />
           <Kpi
             label="Fill-ish"
-            value={latest.fillIsh != null ? `${latest.fillIsh}%` : '—'}
+            value={latest.fillIsh != null ? `${latest.fillIsh}%` : '-'}
           />
         </div>
       ) : null}
 
-      {chartData.length > 0 ? (
+      {chartData.length > 0 && !isGlobalView ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <ChartCard
             title="Spend & billable views"
@@ -252,6 +281,7 @@ export default function AdsReportingPage() {
           >
             <DualAxisLine
               data={chartData}
+              currency={deskCurrency}
               left={{
                 key: 'spend',
                 name: 'Spend',
@@ -277,6 +307,7 @@ export default function AdsReportingPage() {
           >
             <DualAxisLine
               data={chartData}
+              currency={deskCurrency}
               left={{
                 key: 'ctr',
                 name: 'CTR %',
@@ -327,11 +358,13 @@ export default function AdsReportingPage() {
                 <DataTableRow key={`${row.report_date}-${row.placement}`}>
                   <DataTableCell>{row.report_date}</DataTableCell>
                   <DataTableCell>{Number(m.billableImpressions || 0).toLocaleString()}</DataTableCell>
-                  <DataTableCell>{moneyMinor(m.spentMinor)}</DataTableCell>
+                  <DataTableCell>{moneyLabel(m.spentMinor)}</DataTableCell>
                   <DataTableCell>{Number(m.clicks || 0).toLocaleString()}</DataTableCell>
-                  <DataTableCell>{m.ctr != null ? `${m.ctr}%` : '—'}</DataTableCell>
-                  <DataTableCell>{m.ecpm != null ? moneyMinor(Math.round(Number(m.ecpm))) : '—'}</DataTableCell>
-                  <DataTableCell>{moneyMinor(m.revenueMinor)}</DataTableCell>
+                  <DataTableCell>{m.ctr != null ? `${m.ctr}%` : '-'}</DataTableCell>
+                  <DataTableCell>
+                    {m.ecpm != null ? moneyLabel(Math.round(Number(m.ecpm))) : '-'}
+                  </DataTableCell>
+                  <DataTableCell>{moneyLabel(m.revenueMinor)}</DataTableCell>
                   <DataTableCell>{Number(m.addToCarts || 0).toLocaleString()}</DataTableCell>
                   <DataTableCell>{Number(m.purchases || 0).toLocaleString()}</DataTableCell>
                 </DataTableRow>

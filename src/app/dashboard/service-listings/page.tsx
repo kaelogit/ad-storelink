@@ -38,9 +38,11 @@ function ServiceListingsTable({
   const [list, setList] = useState<ListingRow[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(0)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const loadList = useCallback(async () => {
     setLoading(true)
+    setErrorMsg(null)
     const pCountry = countryCode === ALL_COUNTRIES_CODE ? null : countryCode
     const pCategory = categoryFilter.trim() || null
     const offset = page * PAGE_SIZE
@@ -54,6 +56,7 @@ function ServiceListingsTable({
       setList(data as ListingRow[])
     } else {
       setList([])
+      setErrorMsg(error?.message || 'Failed to load service listings.')
     }
     setLoading(false)
   }, [countryCode, categoryFilter, page, supabase])
@@ -69,12 +72,20 @@ function ServiceListingsTable({
 
   return (
     <>
+      {errorMsg ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {errorMsg}
+        </div>
+      ) : null}
       {loading && list.length === 0 ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--primary)' }} />
         </div>
       ) : list.length === 0 ? (
-        <EmptyState icon={Package} message="No service listings match the filter." />
+        <EmptyState
+          icon={Package}
+          message={errorMsg ? 'Could not load service listings.' : 'No service listings match the filter.'}
+        />
       ) : (
         <>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -111,7 +122,7 @@ function ServiceListingsTable({
                       {row.currency_code} {(row.hero_price_min / 100).toLocaleString()}+
                     </td>
                     <td className="p-3">{row.seller_display_name}</td>
-                    <td className="p-3 text-gray-500">{row.location_country_code ?? '—'}</td>
+                    <td className="p-3 text-gray-500">{row.location_country_code ?? '-'}</td>
                     <td className="p-3">
                       {row.is_active ? (
                         <span className="text-green-600 font-bold">Yes</span>
@@ -128,7 +139,7 @@ function ServiceListingsTable({
 
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-gray-200 pt-4">
             <p className="text-sm text-gray-600">
-              Showing <span className="font-semibold text-gray-900">{rangeStart}</span>–
+              Showing <span className="font-semibold text-gray-900">{rangeStart}</span>-
               <span className="font-semibold text-gray-900">{rangeEnd}</span>
               {hasNext ? ' · more on next page' : ''}
             </p>

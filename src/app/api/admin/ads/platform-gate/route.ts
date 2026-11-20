@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Reason must be at least 10 characters' }, { status: 400 })
   }
   if (rolloutPercent < 0 || rolloutPercent > 100) {
-    return NextResponse.json({ error: 'rolloutPercent must be 0–100' }, { status: 400 })
+    return NextResponse.json({ error: 'rolloutPercent must be 0-100' }, { status: 400 })
   }
   if (!idempotencyKey) {
     return NextResponse.json({ error: 'x-idempotency-key header is required' }, { status: 400 })

@@ -9,6 +9,7 @@ import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 type ReelReportRow = {
   report_id: string
@@ -76,6 +77,8 @@ type ActiveAction =
   | { mode: 'report'; row: ReelReportRow; action: 'dismiss' | 'hide' | 'remove' | 'reinstate' }
 
 export default function ReelsModerationPage() {
+  const { role } = useAdminRole()
+  const canModerate = role === 'super_admin' || role === 'moderator' || role === 'support'
   const [deskTab, setDeskTab] = useState<'discover' | 'reports'>('discover')
   const [discoverRows, setDiscoverRows] = useState<DiscoverReelRow[]>([])
   const [reportRows, setReportRows] = useState<ReelReportRow[]>([])
@@ -90,36 +93,53 @@ export default function ReelsModerationPage() {
 
   const loadDiscover = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ scope: discoverScope, limit: '120', offset: '0' })
-    const response = await fetch(`/api/admin/reels/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load discover feed reels.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({ scope: discoverScope, limit: '120', offset: '0' })
+      const response = await fetch(`/api/admin/reels/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load discover feed reels.')
+        setFeedback({ tone: 'error', message: msg })
+        setDiscoverRows([])
+        setSummary(null)
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: DiscoverReelRow[]; summary?: DiscoverSummary }
+      setDiscoverRows(Array.isArray(payload.rows) ? payload.rows : [])
+      setSummary(payload.summary ?? null)
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load discover feed reels.',
+      })
       setDiscoverRows([])
       setSummary(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: DiscoverReelRow[]; summary?: DiscoverSummary }
-    setDiscoverRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setSummary(payload.summary ?? null)
-    setLoading(false)
   }, [discoverScope])
 
   const loadReports = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ status: reportStatus, limit: '120', offset: '0' })
-    const response = await fetch(`/api/admin/reels/reports/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load Reels reports.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({ status: reportStatus, limit: '120', offset: '0' })
+      const response = await fetch(`/api/admin/reels/reports/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load Reels reports.')
+        setFeedback({ tone: 'error', message: msg })
+        setReportRows([])
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: ReelReportRow[] }
+      setReportRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load Reels reports.',
+      })
       setReportRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: ReelReportRow[] }
-    setReportRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [reportStatus])
 
   const refresh = useCallback(async () => {
@@ -240,7 +260,7 @@ export default function ReelsModerationPage() {
               {ELIGIBILITY_SURFACES.map((item) => (
                 <li key={item.rpc}>
                   <span className="font-semibold">{item.surface}</span>
-                  {' — '}
+                  {': '}
                   <code className="rounded bg-white/80 px-1">{item.rpc}</code>
                 </li>
               ))}
@@ -353,7 +373,7 @@ export default function ReelsModerationPage() {
                       </div>
                     </DataTableCell>
                     <DataTableCell>
-                      <span className="text-xs text-gray-700">{row.product_name || '—'}</span>
+                      <span className="text-xs text-gray-700">{row.product_name || '-'}</span>
                     </DataTableCell>
                     <DataTableCell>
                       <div className="space-y-1">
@@ -373,6 +393,7 @@ export default function ReelsModerationPage() {
                       <span className="text-xs text-gray-700">@{row.seller_slug || 'store'}</span>
                     </DataTableCell>
                     <DataTableCell>
+                      {canModerate ? (
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => { setApplyStrike(false); setActiveAction({ mode: 'discover', row, action: 'hide' }) }}
@@ -395,6 +416,9 @@ export default function ReelsModerationPage() {
                           </button>
                         )}
                       </div>
+                      ) : (
+                        <span className="text-[11px] text-gray-400">Read-only</span>
+                      )}
                     </DataTableCell>
                   </DataTableRow>
                 ))}
@@ -453,6 +477,7 @@ export default function ReelsModerationPage() {
                     <span className="text-xs text-gray-700">@{row.seller_slug || 'store'}</span>
                   </DataTableCell>
                   <DataTableCell>
+                    {canModerate ? (
                     <div className="flex flex-wrap gap-2">
                       <button
                         onClick={() => { setApplyStrike(false); setActiveAction({ mode: 'report', row, action: 'dismiss' }) }}
@@ -472,13 +497,18 @@ export default function ReelsModerationPage() {
                       >
                         Remove
                       </button>
+                      {row.reel_moderation_state !== 'active' ? (
                       <button
                         onClick={() => { setApplyStrike(false); setActiveAction({ mode: 'report', row, action: 'reinstate' }) }}
                         className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
                       >
                         Reinstate
                       </button>
+                      ) : null}
                     </div>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">Read-only</span>
+                    )}
                   </DataTableCell>
                 </DataTableRow>
               ))}

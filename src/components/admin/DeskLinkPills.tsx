@@ -1,16 +1,23 @@
+'use client'
+
 import Link from 'next/link'
+import { useAdminRole } from '../../hooks/useAdminRole'
+import { roleCanOpenPath } from '../../constants/adminNavigation'
 
 type DeskLink = {
   href: string
   label: string
 }
 
+/** Cross-desk shortcuts; links the current role cannot open (per nav RBAC) are hidden. */
 export function DeskLinkPills({ links }: { links: DeskLink[] }) {
-  if (!links.length) return null
+  const { role } = useAdminRole()
+  const visible = links.filter((link) => roleCanOpenPath(role, link.href))
+  if (!visible.length) return null
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {links.map((link) => (
+      {visible.map((link) => (
         <Link
           key={link.href}
           href={link.href}

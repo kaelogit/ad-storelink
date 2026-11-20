@@ -36,12 +36,14 @@ function formatEndsIn(minutes: number) {
   return `${Math.floor(minutes / 1440)}d left`
 }
 
+const STORE_APP_BASE = (process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng').replace(/\/$/, '')
+
 function publicListingUrl(row: FlashDropRow) {
   const slug = row.slug || row.listing_id
   if (row.listing_type === 'service') {
-    return `https://storelink.ng/service/${encodeURIComponent(slug)}`
+    return `${STORE_APP_BASE}/service/${encodeURIComponent(slug)}`
   }
-  return `https://storelink.ng/p/${encodeURIComponent(slug)}`
+  return `${STORE_APP_BASE}/p/${encodeURIComponent(slug)}`
 }
 
 function adminListingUrl(row: FlashDropRow) {
@@ -72,25 +74,33 @@ export default function FlashDropsPage() {
   const loadRows = useCallback(async () => {
     setLoading(true)
     setFeedback(null)
-    const params = new URLSearchParams({
-      listingType,
-      limit: '120',
-      offset: '0',
-    })
-    if (countryCode !== ALL_COUNTRIES_CODE) params.set('countryCode', countryCode)
-    if (query.trim()) params.set('q', query.trim())
+    try {
+      const params = new URLSearchParams({
+        listingType,
+        limit: '120',
+        offset: '0',
+      })
+      if (countryCode !== ALL_COUNTRIES_CODE) params.set('countryCode', countryCode)
+      if (query.trim()) params.set('q', query.trim())
 
-    const response = await fetch(`/api/admin/flash-drops/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load flash drops.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch(`/api/admin/flash-drops/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load flash drops.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: FlashDropRow[] }
+      setRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load flash drops.',
+      })
       setRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: FlashDropRow[] }
-    setRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [countryCode, listingType, query])
 
   useEffect(() => {
@@ -208,20 +218,20 @@ export default function FlashDropsPage() {
                     <DataTableCell>
                       <div className="text-xs space-y-1">
                         <p className="font-semibold text-gray-900">@{row.seller_slug || row.seller_id.slice(0, 8)}</p>
-                        <p className="text-gray-500">{row.seller_display_name || '—'}</p>
+                        <p className="text-gray-500">{row.seller_display_name || '-'}</p>
                         <Link href={`/dashboard/users?q=${row.seller_id}`} className="text-blue-600 hover:underline">
                           Seller dossier
                         </Link>
-                        <p className="text-[10px] text-gray-400">{row.location_country || '—'}</p>
+                        <p className="text-[10px] text-gray-400">{row.location_country || '-'}</p>
                       </div>
                     </DataTableCell>
                     <DataTableCell>
                       <div className="text-xs space-y-0.5 font-mono">
                         <p className="text-gray-500 line-through">
-                          {row.currency_code || '—'} {Number(row.regular_price).toLocaleString()}
+                          {row.currency_code || '-'} {Number(row.regular_price).toLocaleString()}
                         </p>
                         <p className="font-bold text-amber-700">
-                          {row.currency_code || '—'} {Number(row.flash_price).toLocaleString()}
+                          {row.currency_code || '-'} {Number(row.flash_price).toLocaleString()}
                         </p>
                         <p className="text-emerald-700">
                           −{Number(row.price_delta).toLocaleString()} ({Number(row.discount_pct).toFixed(1)}%)
@@ -242,7 +252,7 @@ export default function FlashDropsPage() {
                     <DataTableCell>
                       <div className="flex flex-wrap gap-1">
                         {flags.length === 0 ? (
-                          <span className="text-[10px] text-gray-400">—</span>
+                          <span className="text-[10px] text-gray-400">-</span>
                         ) : (
                           flags.map((flag) => (
                             <span

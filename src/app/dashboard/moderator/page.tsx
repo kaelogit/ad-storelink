@@ -70,6 +70,7 @@ export default function ModeratorPage() {
   const [bulkKycBusy, setBulkKycBusy] = useState(false)
   const [bulkKycRejectOpen, setBulkKycRejectOpen] = useState(false)
   const [bulkBizRejectOpen, setBulkBizRejectOpen] = useState(false)
+  const [pendingBulkApprove, setPendingBulkApprove] = useState<'identity' | 'business' | null>(null)
 
   const fetchRequests = useCallback(async () => {
     setLoading(true)
@@ -78,8 +79,12 @@ export default function ModeratorPage() {
       .from('merchant_verifications')
       .select('*')
       .order('created_at', { ascending: false })
-    if (error) console.error('fetchRequests: merchant_verifications failed', error)
-    setRequests(data ?? [])
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load KYC queue.' })
+      setRequests([])
+    } else {
+      setRequests(data ?? [])
+    }
     setLoading(false)
   }, [supabase])
 
@@ -89,8 +94,12 @@ export default function ModeratorPage() {
       .from('business_verifications')
       .select('*')
       .order('created_at', { ascending: false })
-    if (error) console.error('fetchBusinessRequests failed', error)
-    setBusinessRequests(data ?? [])
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load business KYC queue.' })
+      setBusinessRequests([])
+    } else {
+      setBusinessRequests(data ?? [])
+    }
     setBusinessLoading(false)
   }, [supabase])
 
@@ -288,7 +297,7 @@ export default function ModeratorPage() {
 
   const fetchAbuseReports = useCallback(async () => {
     setAbuseLoading(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('abuse_reports')
       .select(`
         *,
@@ -297,13 +306,18 @@ export default function ModeratorPage() {
       `)
       .order('created_at', { ascending: false })
       .limit(100)
-    setAbuseReports(data ?? [])
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load abuse reports.' })
+      setAbuseReports([])
+    } else {
+      setAbuseReports(data ?? [])
+    }
     setAbuseLoading(false)
-  }, [])
+  }, [supabase])
 
   const fetchModCases = useCallback(async () => {
     setCasesLoading(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('moderation_cases')
       .select(`
         *,
@@ -311,13 +325,18 @@ export default function ModeratorPage() {
       `)
       .order('created_at', { ascending: false })
       .limit(100)
-    setModCases(data ?? [])
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load moderation cases.' })
+      setModCases([])
+    } else {
+      setModCases(data ?? [])
+    }
     setCasesLoading(false)
-  }, [])
+  }, [supabase])
 
   const fetchAppeals = useCallback(async () => {
     setAppealsLoading(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('suspension_appeals')
       .select(`
         *,
@@ -325,9 +344,14 @@ export default function ModeratorPage() {
       `)
       .order('created_at', { ascending: false })
       .limit(100)
-    setAppeals(data ?? [])
+    if (error) {
+      setFeedback({ tone: 'error', message: error.message || 'Failed to load appeals.' })
+      setAppeals([])
+    } else {
+      setAppeals(data ?? [])
+    }
     setAppealsLoading(false)
-  }, [])
+  }, [supabase])
 
   useEffect(() => {
     if (activeTab === 'abuse') fetchAbuseReports()
@@ -696,8 +720,8 @@ export default function ModeratorPage() {
           <select value={`${sort}:${order}`} onChange={(e) => { const [s, o] = e.target.value.split(':'); setSort(s); setOrder(o as 'asc' | 'desc'); }} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-gray-800 outline-none focus:ring-2 focus:ring-blue-500">
             <option value="created_at:desc">Newest first</option>
             <option value="created_at:asc">Oldest first</option>
-            <option value="display_name:asc">Name A–Z</option>
-            <option value="display_name:desc">Name Z–A</option>
+            <option value="display_name:asc">Name A-Z</option>
+            <option value="display_name:desc">Name Z-A</option>
           </select>
         </label>
         {canWrite && selectedKycIds.size > 0 ? (
@@ -706,7 +730,7 @@ export default function ModeratorPage() {
             <button
               type="button"
               disabled={bulkKycBusy}
-              onClick={() => void runBulkKyc('verified')}
+              onClick={() => setPendingBulkApprove('identity')}
               className="rounded border border-emerald-300 bg-white px-2 py-0.5 text-[11px] text-emerald-800"
             >
               Bulk approve
@@ -960,7 +984,7 @@ export default function ModeratorPage() {
                               />
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-semibold text-gray-900">
-                                  {selectedProfile?.display_name ?? selectedRequest?.user_id?.slice(0, 8) ?? '—'}
+                                  {selectedProfile?.display_name ?? selectedRequest?.user_id?.slice(0, 8) ?? '-'}
                                 </p>
                                 <p className="truncate text-xs text-gray-500">
                                   @{selectedProfile?.slug ?? 'merchant'}
@@ -969,18 +993,18 @@ export default function ModeratorPage() {
                             </div>
                             <InfoRow
                               label="Business Name"
-                              value={selectedProfile?.display_name ?? selectedRequest?.user_id?.slice(0, 8) ?? '—'}
+                              value={selectedProfile?.display_name ?? selectedRequest?.user_id?.slice(0, 8) ?? '-'}
                             />
                             <InfoRow
                               label="Email Address"
-                              value={selectedProfile?.email ?? '—'}
+                              value={selectedProfile?.email ?? '-'}
                             />
                             <InfoRow
                               label="Slug"
-                              value={selectedProfile?.slug ?? '—'}
+                              value={selectedProfile?.slug ?? '-'}
                             />
                             <InfoRow label="Document Type" value={selectedRequest.id_type || 'National ID'} />
-                            <InfoRow label="Document Number" value={selectedRequest.id_number || '—'} />
+                            <InfoRow label="Document Number" value={selectedRequest.id_number || '-'} />
                             {selectedRequest.rejection_reason && (
                               <InfoRow label="Last Rejection Reason" value={selectedRequest.rejection_reason} />
                             )}
@@ -1007,7 +1031,7 @@ export default function ModeratorPage() {
                             </div>
                         )}
                         {!canWrite && selectedRequest.status === 'pending' ? (
-                          <p className="pt-4 text-center text-xs text-gray-500">Analyst view — verification actions hidden</p>
+                          <p className="pt-4 text-center text-xs text-gray-500">Analyst view. Verification actions hidden</p>
                         ) : null}
 
                         {selectedRequest.status === 'approved' && (
@@ -1054,7 +1078,7 @@ export default function ModeratorPage() {
                 <button
                   type="button"
                   disabled={bulkKycBusy}
-                  onClick={() => void runBulkKyc('verified', undefined, 'business')}
+                  onClick={() => setPendingBulkApprove('business')}
                   className="rounded border border-emerald-300 bg-white px-2 py-0.5 text-[11px] text-emerald-800"
                 >
                   Bulk approve
@@ -1254,12 +1278,12 @@ export default function ModeratorPage() {
                           value={
                             selectedBusinessProfile?.display_name ??
                             selectedBusinessRequest?.user_id?.slice(0, 8) ??
-                            '—'
+                            '-'
                           }
                         />
-                        <InfoRow label="Email" value={selectedBusinessProfile?.email ?? '—'} />
-                        <InfoRow label="RC / CAC number" value={selectedBusinessRequest.rc_number || '—'} />
-                        <InfoRow label="Company name" value={selectedBusinessRequest.company_name || '—'} />
+                        <InfoRow label="Email" value={selectedBusinessProfile?.email ?? '-'} />
+                        <InfoRow label="RC / CAC number" value={selectedBusinessRequest.rc_number || '-'} />
+                        <InfoRow label="Company name" value={selectedBusinessRequest.company_name || '-'} />
                         {selectedBusinessRequest.rejection_reason && (
                           <InfoRow label="Last rejection reason" value={selectedBusinessRequest.rejection_reason} />
                         )}
@@ -1304,7 +1328,7 @@ export default function ModeratorPage() {
                         </div>
                       )}
                       {!canWrite && selectedBusinessRequest.status === 'pending' ? (
-                        <p className="pt-4 text-center text-xs text-gray-500">Analyst view — verification actions hidden</p>
+                        <p className="pt-4 text-center text-xs text-gray-500">Analyst view. Verification actions hidden</p>
                       ) : null}
 
                       {selectedBusinessRequest.status === 'approved' && (
@@ -1460,6 +1484,23 @@ export default function ModeratorPage() {
         </div>
       )}
 
+      <ConfirmActionModal
+        open={pendingBulkApprove !== null}
+        title={pendingBulkApprove === 'business' ? 'Bulk approve business KYC?' : 'Bulk approve identity KYC?'}
+        description={`You are about to approve ${
+          pendingBulkApprove === 'business' ? selectedBizIds.size : selectedKycIds.size
+        } pending request(s). This cannot be undone from this screen.`}
+        impactSummary="Selected pending sellers will be marked verified."
+        confirmLabel="Bulk approve"
+        submitting={bulkKycBusy}
+        onClose={() => setPendingBulkApprove(null)}
+        onConfirm={async () => {
+          const kind = pendingBulkApprove
+          if (!kind) return
+          await runBulkKyc('verified', undefined, kind)
+          setPendingBulkApprove(null)
+        }}
+      />
       <ConfirmActionModal
         open={pendingAppealDecision === 'approve'}
         title="Approve this appeal?"

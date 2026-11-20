@@ -121,8 +121,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status })
   }
 
-  const body = (await request.json().catch(() => ({}))) as { mode?: RunMode }
+  const body = (await request.json().catch(() => ({}))) as { mode?: RunMode; reason?: string }
   const mode: RunMode = body.mode === 'ci' ? 'ci' : 'live'
+  const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 600) : ''
   const idempotencyKey = request.headers.get('x-idempotency-key')?.trim()
   if (!idempotencyKey) {
     return NextResponse.json({ error: 'x-idempotency-key header is required' }, { status: 400 })
@@ -154,7 +155,7 @@ export async function POST(request: Request) {
       admin_email: auth.email,
       action_type: 'SAFETY_TESTS_RUN',
       target_id: 'ci',
-      details: { mode: 'ci', idempotencyKey },
+      details: { mode: 'ci', idempotencyKey, reason: reason || null },
     })
 
     return NextResponse.json({
@@ -188,7 +189,9 @@ export async function POST(request: Request) {
     tests,
   }
 
-  const { data: inserted, error: insertError } = await auth.supabase
+  // Table RLS is SELECT-only for admins; writes go through service role after API auth.
+  const service = createServiceSupabaseClient()
+  const { data: inserted, error: insertError } = await service
     .from('safety_test_runs')
     .insert({
       repo: 'live-probes',
@@ -223,6 +226,7 @@ export async function POST(request: Request) {
       passed,
       failed,
       idempotencyKey,
+      reason: reason || null,
       runId: inserted?.id,
     },
   })

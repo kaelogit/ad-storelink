@@ -413,7 +413,7 @@ export function activitySummary(item: GroupedActivity, profileUserId: string): s
       const ev = (item.booking_event || '').toLowerCase()
       if (ev === 'requested') return 'New booking request'
       if (ev === 'confirmed') return 'Booking confirmed'
-      if (ev === 'paid') return 'Booking paid – in escrow'
+      if (ev === 'paid') return 'Booking paid, in escrow'
       if (ev === 'in_progress') return 'Booking in progress'
       if (ev === 'completed') return 'Booking completed'
       return 'Booking update'

@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
@@ -177,6 +178,8 @@ function attachmentSummary(m: DisputeChatMessageRow): string | null {
 export default function BookingsPage() {
   const supabase = createClient()
   const { countryCode } = useCountryFilter()
+  const searchParams = useSearchParams()
+  const deepLinkHandled = useRef<string | null>(null)
   const [query, setQuery] = useState('')
   const [booking, setBooking] = useState<BookingDetail | null>(null)
   const [list, setList] = useState<BookingListRow[]>([])
@@ -246,6 +249,20 @@ export default function BookingsPage() {
     await openBookingByQuery(query)
   }
 
+  useEffect(() => {
+    const qParam = (
+      searchParams.get('q') ||
+      searchParams.get('serviceOrderId') ||
+      searchParams.get('bookingId') ||
+      ''
+    ).trim()
+    if (!qParam) return
+    if (deepLinkHandled.current === qParam) return
+    deepLinkHandled.current = qParam
+    void openBookingByQuery(qParam)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deep-link once per q value
+  }, [searchParams])
+
   const loadList = async () => {
     setListLoading(true)
     const pCountry = countryCode === ALL_COUNTRIES_CODE ? null : countryCode
@@ -294,8 +311,8 @@ export default function BookingsPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Unique per attempt so a failed refund+status can be retried safely.
-          'x-idempotency-key': `support-booking-force-status-${booking.id}-${status}-${Date.now()}`,
+          // Stable key so retries of the same intervention do not double-apply.
+          'x-idempotency-key': `support-booking-force-status-${booking.id}-${status}`,
         },
         body: JSON.stringify({
           serviceOrderId: booking.id,

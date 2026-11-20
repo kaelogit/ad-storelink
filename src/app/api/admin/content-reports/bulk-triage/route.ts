@@ -13,7 +13,7 @@ type Body = {
 }
 
 /**
- * Bulk triage for Report Inbox — mark reports dismissed (or policy inconclusive).
+ * Bulk triage for Report Inbox - mark reports dismissed (or policy inconclusive).
  */
 export async function POST(request: Request) {
   const auth = await getApiAdminContext(['super_admin', 'moderator', 'support'])

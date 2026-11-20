@@ -67,31 +67,39 @@ const DAY_OPTIONS = [7, 30, 90, 180] as const
 export default function OnboardingFunnelPage() {
   const { countryCode } = useCountryFilter()
   const [stats, setStats] = useState<FunnelStats | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [days, setDays] = useState<number>(30)
   const [roleFilter, setRoleFilter] = useState<'all' | 'buyer' | 'seller'>('all')
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   const loadStats = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
-      days: String(days),
-      role: roleFilter,
-    })
+    try {
+      const params = new URLSearchParams({
+        country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
+        days: String(days),
+        role: roleFilter,
+      })
 
-    const response = await fetch(`/api/admin/onboarding/stats?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load onboarding funnel stats.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch(`/api/admin/onboarding/stats?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load onboarding funnel stats.')
+        setFeedback({ tone: 'error', message: msg })
+        setStats(null)
+        return
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as { stats?: FunnelStats }
+      setStats(payload.stats ?? null)
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load onboarding funnel stats.',
+      })
       setStats(null)
+    } finally {
       setLoading(false)
-      return
     }
-
-    const payload = (await response.json().catch(() => ({}))) as { stats?: FunnelStats }
-    setStats(payload.stats ?? null)
-    setLoading(false)
   }, [countryCode, days, roleFilter])
 
   useEffect(() => {
@@ -109,13 +117,13 @@ export default function OnboardingFunnelPage() {
     }`
 
   const formatPct = (value: number | null | undefined) =>
-    value == null ? '—' : `${value.toFixed(1)}%`
+    value == null ? '-' : `${value.toFixed(1)}%`
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Onboarding Funnel"
-        subtitle="Step conversion and drop-off for mobile onboarding. Aggregates only — no user identifiers."
+        subtitle="Step conversion and drop-off for mobile onboarding. Aggregates only. No user identifiers."
         actions={
           <DeskLinkPills
             links={[
@@ -148,16 +156,16 @@ export default function OnboardingFunnelPage() {
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Cohort signups</p>
-          <p className="mt-1 text-2xl font-black text-gray-900">{stats?.cohortSignups?.toLocaleString() ?? '—'}</p>
+          <p className="mt-1 text-2xl font-black text-gray-900">{stats?.cohortSignups?.toLocaleString() ?? '-'}</p>
           <p className="mt-1 text-[10px] text-gray-400">Last {stats?.cohortDays ?? days} days</p>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Email verified</p>
-          <p className="mt-1 text-2xl font-black text-gray-900">{stats?.verifiedEmail?.toLocaleString() ?? '—'}</p>
+          <p className="mt-1 text-2xl font-black text-gray-900">{stats?.verifiedEmail?.toLocaleString() ?? '-'}</p>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Completed onboarding</p>
-          <p className="mt-1 text-2xl font-black text-emerald-600">{stats?.completedOnboarding?.toLocaleString() ?? '—'}</p>
+          <p className="mt-1 text-2xl font-black text-emerald-600">{stats?.completedOnboarding?.toLocaleString() ?? '-'}</p>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Completion rate</p>
@@ -165,9 +173,9 @@ export default function OnboardingFunnelPage() {
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Stuck users</p>
-          <p className="mt-1 text-2xl font-black text-amber-800">{stats?.stuckCount?.toLocaleString() ?? '—'}</p>
+          <p className="mt-1 text-2xl font-black text-amber-800">{stats?.stuckCount?.toLocaleString() ?? '-'}</p>
           <p className="mt-1 text-[10px] text-amber-600">
-            Median to complete: {stats?.medianHoursToComplete != null ? `${stats.medianHoursToComplete}h` : '—'}
+            Median to complete: {stats?.medianHoursToComplete != null ? `${stats.medianHoursToComplete}h` : '-'}
           </p>
         </div>
       </div>
@@ -248,7 +256,7 @@ export default function OnboardingFunnelPage() {
                       </DataTableCell>
                       <DataTableCell>
                         <span className="text-xs text-amber-700">
-                          {step.dropOffCount > 0 ? `${step.dropOffCount.toLocaleString()} (${formatPct(step.dropOffRate)})` : '—'}
+                          {step.dropOffCount > 0 ? `${step.dropOffCount.toLocaleString()} (${formatPct(step.dropOffRate)})` : '-'}
                         </span>
                       </DataTableCell>
                       <DataTableCell>

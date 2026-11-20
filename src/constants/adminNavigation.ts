@@ -84,7 +84,8 @@ export const ADMIN_NAVIGATION: AdminNavItem[] = [
   { name: 'Transaction Ops', href: '/dashboard/orders', icon: 'Package', allowedRoles: ['super_admin', 'finance', 'support'], group: 'money' },
   { name: 'Bookings', href: '/dashboard/bookings', icon: 'CalendarCheck', allowedRoles: ['super_admin', 'finance', 'support'], group: 'money' },
   { name: 'Clawback Debts', href: '/dashboard/clawback-debts', icon: 'HandCoins', allowedRoles: ['super_admin', 'finance', 'support', 'analyst'], group: 'money' },
-  { name: 'Service Listings', href: '/dashboard/service-listings', icon: 'List', allowedRoles: ['super_admin', 'finance', 'support', 'analyst'], group: 'catalog' },
+  // Include moderator so Flash Drops / moderate APIs can deep-link without unauthorized bounce.
+  { name: 'Service Listings', href: '/dashboard/service-listings', icon: 'List', allowedRoles: ['super_admin', 'finance', 'support', 'analyst', 'moderator'], group: 'catalog' },
   { name: 'Products', href: '/dashboard/products', icon: 'ShoppingBag', allowedRoles: ['super_admin', 'finance', 'support', 'analyst', 'moderator'], group: 'catalog' },
   { name: 'Flash Drops', href: '/dashboard/flash-drops', icon: 'Zap', allowedRoles: ['super_admin', 'finance', 'support', 'analyst', 'moderator'], group: 'catalog' },
   { name: 'Spotlight', href: '/dashboard/spotlight', icon: 'Sparkles', allowedRoles: ['super_admin', 'moderator', 'support', 'analyst'], group: 'social' },
@@ -123,6 +124,15 @@ export function allowedRolesForPath(pathname: string): AdminRole[] | null {
     .filter((i) => i.href !== '/dashboard' && pathname.startsWith(i.href))
     .sort((a, b) => b.href.length - a.href.length)
   return matches[0]?.allowedRoles ?? null
+}
+
+/** True when `role` may open `href` per nav RBAC. Unknown roles / non-dashboard paths: external hrefs return true. */
+export function roleCanOpenPath(role: AdminRole | null | undefined, href: string): boolean {
+  const path = href.split(/[?#]/)[0] || href
+  if (!path.startsWith('/dashboard')) return true
+  const allowed = allowedRolesForPath(path)
+  if (!allowed || !role) return false
+  return allowed.includes(role)
 }
 
 export function profileAvatarUrl(opts: {

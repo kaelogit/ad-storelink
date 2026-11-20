@@ -118,7 +118,7 @@ export function UserReferralPanel({ userId, summary }: UserReferralPanelProps) {
           </div>
         ) : (
           <p className="text-[10px] text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-            Organic signup — no inviter attributed.
+            Organic signup. No inviter attributed.
           </p>
         )}
 
@@ -135,7 +135,7 @@ export function UserReferralPanel({ userId, summary }: UserReferralPanelProps) {
                     {row.invitee_name || row.invitee_id.slice(0, 8)}
                   </Link>
                   <p className="text-gray-400">
-                    {row.attributed_at ? new Date(row.attributed_at).toLocaleDateString() : '—'}
+                    {row.attributed_at ? new Date(row.attributed_at).toLocaleDateString() : '-'}
                   </p>
                   {(row.fraud_flags?.length ?? 0) > 0 ? (
                     <p className="text-amber-700 font-semibold">

@@ -9,6 +9,7 @@ type RunPayload = {
   target?: 'products' | 'services' | 'both'
   limit?: number
   batches?: number
+  reason?: string
 }
 
 type BatchResult = {
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
   const target = body.target ?? 'both'
   const limit = Math.min(Math.max(body.limit ?? 50, 1), 200)
   const batches = Math.min(Math.max(body.batches ?? 1, 1), 20)
+  const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 600) : ''
 
   if (!['products', 'services', 'both'].includes(target)) {
     return NextResponse.json({ error: 'target must be products, services, or both' }, { status: 400 })
@@ -101,6 +103,7 @@ export async function POST(request: Request) {
         totalProcessed,
         results,
         idempotencyKey,
+        reason: reason || null,
         coverage,
       },
     })

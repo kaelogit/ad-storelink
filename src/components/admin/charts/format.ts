@@ -1,16 +1,58 @@
-export function formatNaira(amount: number | null | undefined) {
-  return new Intl.NumberFormat('en-NG', {
-    style: 'currency',
-    currency: 'NGN',
-    maximumFractionDigits: 0,
-  }).format(Number(amount || 0))
+const CURRENCY_LOCALE: Record<string, string> = {
+  NGN: 'en-NG',
+  GHS: 'en-GH',
+  ZAR: 'en-ZA',
+  KES: 'en-KE',
+  XOF: 'fr-CI',
+  EGP: 'en-EG',
+  RWF: 'en-RW',
 }
 
-export function formatNairaCompact(amount: number | null | undefined) {
+function currencySymbol(currency: string) {
+  const code = (currency || 'NGN').toUpperCase()
+  try {
+    const parts = new Intl.NumberFormat(CURRENCY_LOCALE[code] || 'en', {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0,
+    }).formatToParts(0)
+    return parts.find((p) => p.type === 'currency')?.value ?? code
+  } catch {
+    return code
+  }
+}
+
+export function formatMoney(amount: number | null | undefined, currency = 'NGN') {
+  const code = (currency || 'NGN').toUpperCase()
+  try {
+    return new Intl.NumberFormat(CURRENCY_LOCALE[code] || 'en', {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(Number(amount || 0))
+  } catch {
+    return `${code} ${Math.round(Number(amount || 0)).toLocaleString('en')}`
+  }
+}
+
+export function formatMoneyCompact(amount: number | null | undefined, currency = 'NGN') {
   const n = Number(amount || 0)
-  if (Math.abs(n) >= 1_000_000) return `₦${(n / 1_000_000).toFixed(1)}M`
-  if (Math.abs(n) >= 1_000) return `₦${(n / 1_000).toFixed(1)}k`
-  return `₦${Math.round(n)}`
+  const code = (currency || 'NGN').toUpperCase()
+  const sym = currencySymbol(code)
+  const abs = Math.abs(n)
+  if (abs >= 1_000_000) return `${sym}${(n / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${sym}${(n / 1_000).toFixed(1)}k`
+  return `${sym}${Math.round(n)}`
+}
+
+/** @deprecated Prefer formatMoney(amount, currency) */
+export function formatNaira(amount: number | null | undefined) {
+  return formatMoney(amount, 'NGN')
+}
+
+/** @deprecated Prefer formatMoneyCompact(amount, currency) */
+export function formatNairaCompact(amount: number | null | undefined) {
+  return formatMoneyCompact(amount, 'NGN')
 }
 
 export function formatCount(n: number | null | undefined) {
@@ -18,7 +60,7 @@ export function formatCount(n: number | null | undefined) {
 }
 
 export function formatPct(n: number | null | undefined, digits = 1) {
-  if (n == null || Number.isNaN(Number(n))) return '—'
+  if (n == null || Number.isNaN(Number(n))) return '-'
   return `${Number(n).toFixed(digits)}%`
 }
 

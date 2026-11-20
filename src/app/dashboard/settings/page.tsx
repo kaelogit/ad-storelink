@@ -42,9 +42,9 @@ const DEFAULT_CONFIG: AppSettingsConfig = {
 }
 
 const POLICY_OPTIONS = [
-  { value: 'silent', label: 'Silent — no in-app prompt' },
-  { value: 'optional', label: 'Optional — skippable upgrade screen' },
-  { value: 'mandatory', label: 'Required — block until updated' },
+  { value: 'silent', label: 'Silent: no in-app prompt' },
+  { value: 'optional', label: 'Optional: skippable upgrade screen' },
+  { value: 'mandatory', label: 'Required: block until updated' },
 ]
 
 export default function SystemSettings() {
@@ -193,7 +193,7 @@ export default function SystemSettings() {
           </CardHeader>
           <CardContent>
             <p className="text-xs text-[var(--muted)] mb-4">
-              Always blocks users below this version — even if update policy is silent. Use for broken builds.
+              Always blocks users below this version, even if update policy is silent. Use for broken builds.
             </p>
             <div className="space-y-4">
               <div>

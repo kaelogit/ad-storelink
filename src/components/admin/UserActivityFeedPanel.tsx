@@ -76,7 +76,7 @@ export function UserActivityFeedPanel({ userId }: UserActivityFeedPanelProps) {
 
       <div className="p-4 space-y-3">
         <p className="text-[11px] text-gray-600 leading-relaxed">
-          Same event types as the mobile Activity screen — likes, comments, orders, bookings, spotlight, coins, and more.
+          Same event types as the mobile Activity screen: likes, comments, orders, bookings, spotlight, coins, and more.
           Load is audit-logged.
         </p>
 

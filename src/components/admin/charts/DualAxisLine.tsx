@@ -11,7 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import { ChartTooltip } from './ChartTooltip'
-import { formatCount, formatNairaCompact, shortDay } from './format'
+import { formatCount, formatMoneyCompact, shortDay } from './format'
 
 type AxisSeries = {
   key: string
@@ -26,14 +26,15 @@ type Props = {
   xKey?: string
   left: AxisSeries
   right: AxisSeries
+  currency?: string
 }
 
-export function DualAxisLine({ data, xKey = 'day', left, right }: Props) {
+export function DualAxisLine({ data, xKey = 'day', left, right, currency = 'NGN' }: Props) {
   const moneyKeys = [left, right].filter((s) => s.valueKind === 'money').map((s) => s.key)
   const pctKeys = [left, right].filter((s) => s.valueKind === 'pct').map((s) => s.key)
 
   const tick = (kind: AxisSeries['valueKind'], v: number) => {
-    if (kind === 'money') return formatNairaCompact(v)
+    if (kind === 'money') return formatMoneyCompact(v, currency)
     if (kind === 'pct') return `${v}%`
     return formatCount(v)
   }
@@ -69,7 +70,7 @@ export function DualAxisLine({ data, xKey = 'day', left, right }: Props) {
           width={52}
           tickFormatter={(v) => tick(right.valueKind || 'count', Number(v))}
         />
-        <Tooltip content={<ChartTooltip moneyKeys={moneyKeys} pctKeys={pctKeys} />} />
+        <Tooltip content={<ChartTooltip moneyKeys={moneyKeys} pctKeys={pctKeys} currency={currency} />} />
         <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
         <Line
           yAxisId={left.yAxisId}

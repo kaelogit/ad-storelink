@@ -27,11 +27,12 @@ export async function POST(request: Request) {
     )
   }
 
+  // RPC signature: (p_flag_id, p_outcome, p_status, p_notes) — admin from auth.uid()
   const { data, error } = await auth.supabase.rpc('resolve_content_policy_flag', {
     p_flag_id: flagId,
     p_outcome: outcome,
-    p_admin_id: auth.userId,
-    p_note: note,
+    p_status: 'resolved',
+    p_notes: note,
   })
 
   if (error) {

@@ -79,7 +79,7 @@ Options: wait for older stories to expire, remove or archive older tagged reels,
 ] as const
 
 function formatDate(v?: string | null) {
-  if (!v) return '—'
+  if (!v) return '-'
   try {
     return new Date(v).toLocaleString()
   } catch {
@@ -88,9 +88,9 @@ function formatDate(v?: string | null) {
 }
 
 function driftFieldsLabel(fields: unknown) {
-  if (Array.isArray(fields)) return fields.map(String).join(', ') || '—'
+  if (Array.isArray(fields)) return fields.map(String).join(', ') || '-'
   if (typeof fields === 'string') return fields
-  return '—'
+  return '-'
 }
 
 export default function ListingIntegrityPage() {
@@ -278,7 +278,7 @@ export default function ListingIntegrityPage() {
                           {row.seller_display_name || row.seller_slug || row.seller_id}
                         </Link>
                       ) : (
-                        '—'
+                        '-'
                       )}
                     </td>
                     <td className="p-3 text-gray-700">{row.linked_post_count ?? 0}</td>
@@ -358,7 +358,7 @@ function SummaryCard({
         <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{label}</p>
         <Icon className="h-4 w-4 text-gray-400" />
       </div>
-      <p className="mt-2 text-2xl font-bold text-gray-900">{value ?? '—'}</p>
+      <p className="mt-2 text-2xl font-bold text-gray-900">{value ?? '-'}</p>
     </div>
   )
 }

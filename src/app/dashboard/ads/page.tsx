@@ -25,6 +25,14 @@ import { parseApiError } from '../../../utils/http'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
 import { useAdminRole } from '../../../hooks/useAdminRole'
+import { allowedRolesForPath } from '../../../constants/adminNavigation'
+import { formatMoney } from '../../../components/admin/charts/format'
+import type { AdminRole } from '../../../types/admin'
+
+const STORE_APP_BASE = (process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng').replace(
+  /\/$/,
+  '',
+)
 
 function queueAgeLabel(iso?: string | null): string | null {
   if (!iso) return null
@@ -134,16 +142,7 @@ function canResume(row: AdCampaignRow): boolean {
 }
 
 function moneyMinor(minor: number, currency = 'NGN') {
-  const main = Number(minor || 0) / 100
-  try {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: currency || 'NGN',
-      maximumFractionDigits: 0,
-    }).format(main)
-  } catch {
-    return `${main}`
-  }
+  return formatMoney(Number(minor || 0) / 100, currency || 'NGN')
 }
 
 function statusTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' | 'info' {
@@ -155,9 +154,18 @@ function statusTone(status: string): 'success' | 'danger' | 'warning' | 'neutral
   return 'neutral'
 }
 
-function creativePreview(row: AdCampaignRow) {
+function creativePreview(row: AdCampaignRow): {
+  label: string
+  href: string | null
+  external?: boolean
+} {
   if (row.creative_type === 'image') {
-    return { label: row.headline || row.name || 'House banner', href: row.deeplink || null }
+    const raw = (row.deeplink || '').trim()
+    if (!raw) return { label: row.headline || row.name || 'House banner', href: null }
+    const href = /^https?:\/\//i.test(raw)
+      ? raw
+      : `${STORE_APP_BASE}${raw.startsWith('/') ? raw : `/${raw}`}`
+    return { label: row.headline || row.name || 'House banner', href, external: true }
   }
   if (row.creative_type === 'product' && row.product_id) {
     return { label: 'Product', href: `/dashboard/products/${row.product_id}` }
@@ -173,15 +181,24 @@ function creativePreview(row: AdCampaignRow) {
 
 export default function AdsCampaignsPage() {
   const { countryCode } = useCountryFilter()
-  const { canWrite, role } = useAdminRole()
+  const { role } = useAdminRole()
+  const canModerate =
+    role === 'super_admin' || role === 'moderator' || role === 'content'
+  const canCredit =
+    canModerate || role === 'support' || role === 'finance'
   const canEditAdsConfig = role === 'super_admin'
+  const canOpenPath = (href: string) => {
+    const allowed = allowedRolesForPath(href)
+    if (!allowed || !role) return false
+    return allowed.includes(role as AdminRole)
+  }
   const [status, setStatus] = useState<string>('pending_review')
   const [advertiserType, setAdvertiserType] = useState<'all' | 'seller' | 'platform'>('all')
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<AdCampaignRow[]>([])
   const [pendingReview, setPendingReview] = useState(0)
   const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [reviewTarget, setReviewTarget] = useState<AdCampaignRow | null>(null)
@@ -203,46 +220,66 @@ export default function AdsCampaignsPage() {
 
   const loadGate = useCallback(async () => {
     setGateLoading(true)
-    const res = await fetch('/api/admin/ads/platform-gate')
-    if (!res.ok) {
+    try {
+      const res = await fetch('/api/admin/ads/platform-gate')
+      if (!res.ok) {
+        setGate(null)
+        setFeedback({
+          tone: 'error',
+          message: await parseApiError(res, 'Failed to load ads platform gate.'),
+        })
+        return
+      }
+      const data = await res.json()
+      setGate({
+        enabled: Boolean(data.enabled),
+        rolloutPercent: Number(data.rolloutPercent || 0),
+        canToggle: Boolean(data.canToggle),
+      })
+    } catch (err) {
       setGate(null)
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load ads platform gate.',
+      })
+    } finally {
       setGateLoading(false)
-      return
     }
-    const data = await res.json()
-    setGate({
-      enabled: Boolean(data.enabled),
-      rolloutPercent: Number(data.rolloutPercent || 0),
-      canToggle: Boolean(data.canToggle),
-    })
-    setGateLoading(false)
   }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
     setFeedback(null)
-    const params = new URLSearchParams({
-      status,
-      advertiserType,
-      limit: '80',
-      offset: '0',
-    })
-    if (countryCode !== ALL_COUNTRIES_CODE) params.set('country', countryCode)
-    if (query.trim()) params.set('q', query.trim())
+    try {
+      const params = new URLSearchParams({
+        status,
+        advertiserType,
+        limit: '80',
+        offset: '0',
+      })
+      if (countryCode !== ALL_COUNTRIES_CODE) params.set('country', countryCode)
+      if (query.trim()) params.set('q', query.trim())
 
-    const res = await fetch(`/api/admin/ads/list?${params.toString()}`)
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load campaigns.') })
+      const res = await fetch(`/api/admin/ads/list?${params.toString()}`)
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load campaigns.') })
+        setRows([])
+        return
+      }
+      const data = await res.json()
+      setRows(Array.isArray(data?.campaigns) ? data.campaigns : [])
+      setPendingReview(Number(data?.pendingReview || 0))
+      setTotal(Number(data?.total || 0))
+      setSelectedIds(new Set())
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load campaigns.',
+      })
       setRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const data = await res.json()
-    setRows(Array.isArray(data?.campaigns) ? data.campaigns : [])
-    setPendingReview(Number(data?.pendingReview || 0))
-    setTotal(Number(data?.total || 0))
-    setSelectedIds(new Set())
-    setLoading(false)
   }, [status, advertiserType, countryCode, query])
 
   const toggleSelect = (id: string) => {
@@ -265,28 +302,36 @@ export default function AdsCampaignsPage() {
   const runBulk = async () => {
     if (!bulkAction || selectedIds.size === 0) return
     setBulkBusy(true)
-    const ids = Array.from(selectedIds)
-    const results = await Promise.allSettled(
-      ids.map((campaignId) =>
-        fetch('/api/admin/ads/moderate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaignId, action: bulkAction }),
-        }).then(async (res) => {
-          if (!res.ok) throw new Error(await parseApiError(res, 'Failed'))
-          return campaignId
-        }),
-      ),
-    )
-    const ok = results.filter((r) => r.status === 'fulfilled').length
-    const fail = results.length - ok
-    setFeedback({
-      tone: fail ? 'error' : 'success',
-      message: `Bulk ${bulkAction}: ${ok} ok${fail ? `, ${fail} failed` : ''}.`,
-    })
-    setBulkBusy(false)
-    setBulkAction(null)
-    await load()
+    try {
+      const ids = Array.from(selectedIds)
+      const results = await Promise.allSettled(
+        ids.map((campaignId) =>
+          fetch('/api/admin/ads/moderate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ campaignId, action: bulkAction }),
+          }).then(async (res) => {
+            if (!res.ok) throw new Error(await parseApiError(res, 'Failed'))
+            return campaignId
+          }),
+        ),
+      )
+      const ok = results.filter((r) => r.status === 'fulfilled').length
+      const fail = results.length - ok
+      setFeedback({
+        tone: fail ? 'error' : 'success',
+        message: `Bulk ${bulkAction}: ${ok} ok${fail ? `, ${fail} failed` : ''}.`,
+      })
+      setBulkAction(null)
+      await load()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Bulk action failed.',
+      })
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -300,34 +345,41 @@ export default function AdsCampaignsPage() {
   const moderate = async (campaignId: string, action: string, reason?: string, reasonCategory?: string) => {
     setBusyId(campaignId)
     setFeedback({ tone: 'info', message: `${action}…` })
-    const res = await fetch('/api/admin/ads/moderate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId, action, reason, reasonCategory }),
-    })
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Moderation failed.') })
-      setBusyId(null)
-      return
-    }
-    const data = await res.json().catch(() => ({}))
-    if (action === 'reject' && data?.refund?.ok) {
-      const coins = data.refund.coinsCredited
-      setFeedback({
-        tone: 'success',
-        message: `Campaign rejected. Auto-credited ${coins ?? '?'} Store Coins for unused package.`,
+    try {
+      const res = await fetch('/api/admin/ads/moderate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId, action, reason, reasonCategory }),
       })
-    } else if (action === 'reject' && data?.refundError) {
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Moderation failed.') })
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      if (action === 'reject' && data?.refund?.ok) {
+        const coins = data.refund.coinsCredited
+        setFeedback({
+          tone: 'success',
+          message: `Campaign rejected. Auto-credited ${coins ?? '?'} Store Coins for unused package.`,
+        })
+      } else if (action === 'reject' && data?.refundError) {
+        setFeedback({
+          tone: 'error',
+          message: `Campaign rejected, but credit failed: ${data.refundError}. Use Issue credit to retry.`,
+        })
+      } else {
+        setFeedback({ tone: 'success', message: `Campaign ${action}d.` })
+      }
+      setConfirmAction(null)
+      await load()
+    } catch (err) {
       setFeedback({
         tone: 'error',
-        message: `Campaign rejected, but credit failed: ${data.refundError}. Use Issue credit to retry.`,
+        message: err instanceof Error ? err.message : 'Moderation failed.',
       })
-    } else {
-      setFeedback({ tone: 'success', message: `Campaign ${action}d.` })
+    } finally {
+      setBusyId(null)
     }
-    setBusyId(null)
-    setConfirmAction(null)
-    await load()
   }
 
   const submitGate = async (payload: { category: string; reason: string }) => {
@@ -366,31 +418,38 @@ export default function AdsCampaignsPage() {
   const issueCredit = async (campaignId: string, reason: string, amountMinor: number | null) => {
     setBusyId(campaignId)
     setFeedback({ tone: 'info', message: 'Issuing store-coin credit…' })
-    const res = await fetch('/api/admin/ads/refund', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        campaignId,
-        reason,
-        amountMinor,
-      }),
-    })
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Credit failed.') })
+    try {
+      const res = await fetch('/api/admin/ads/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaignId,
+          reason,
+          amountMinor,
+        }),
+      })
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Credit failed.') })
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      const coins = data?.coinsCredited
+      setFeedback({
+        tone: 'success',
+        message: data?.idempotent
+          ? 'Already credited earlier (idempotent).'
+          : `Credited ${coins ?? '?'} Store Coins for unused Boost budget.`,
+      })
+      setCreditTarget(null)
+      await load()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Credit failed.',
+      })
+    } finally {
       setBusyId(null)
-      return
     }
-    const data = await res.json().catch(() => ({}))
-    const coins = data?.coinsCredited
-    setFeedback({
-      tone: 'success',
-      message: data?.idempotent
-        ? 'Already credited earlier (idempotent).'
-        : `Credited ${coins ?? '?'} Store Coins for unused Boost budget.`,
-    })
-    setBusyId(null)
-    setCreditTarget(null)
-    await load()
   }
 
   const summary = useMemo(
@@ -405,18 +464,22 @@ export default function AdsCampaignsPage() {
         subtitle="Approve seller Boosts, pause delivery, issue unused credits, and control the global ads kill switch."
         actions={
           <div className="flex gap-2">
-            <Link
-              href="/dashboard/ads/reporting"
-              className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
-            >
-              Reporting
-            </Link>
-            <Link
-              href="/dashboard/house-ads"
-              className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
-            >
-              House ads
-            </Link>
+            {canOpenPath('/dashboard/ads/reporting') ? (
+              <Link
+                href="/dashboard/ads/reporting"
+                className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
+              >
+                Reporting
+              </Link>
+            ) : null}
+            {canOpenPath('/dashboard/house-ads') ? (
+              <Link
+                href="/dashboard/house-ads"
+                className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
+              >
+                House ads
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -436,7 +499,7 @@ export default function AdsCampaignsPage() {
 
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
         <strong>Launch hold:</strong> Keep platform ads <em>off</em> until go-live. Do not use Turn on /
-        Ramp here yet — review and pause tools still work while delivery stays gated.
+        Ramp here yet. Review and pause tools still work while delivery stays gated.
       </div>
 
       {(canEditAdsConfig || role === 'analyst') ? (
@@ -461,16 +524,22 @@ export default function AdsCampaignsPage() {
                 {gateLoading
                   ? 'Loading…'
                   : gate?.enabled && gate.rolloutPercent > 0
-                    ? `Live — ${gate.rolloutPercent}% rollout. Seller Boosts and house ads can deliver.`
-                    : 'Off — campaigns stay reviewable, but delivery is blocked until you turn this on.'}
+                    ? `Live: ${gate.rolloutPercent}% rollout. Seller Boosts and house ads can deliver.`
+                    : 'Off: campaigns stay reviewable, but delivery is blocked until you turn this on.'}
               </p>
               {!gate?.canToggle ? (
                 <p className="mt-1 text-[11px] text-zinc-500">
-                  Super Admin can toggle here. Others:{' '}
-                  <Link href="/dashboard/feature-flags" className="underline">
-                    Feature Flags
-                  </Link>
-                  .
+                  Super Admin can toggle here.
+                  {canOpenPath('/dashboard/feature-flags') ? (
+                    <>
+                      {' '}
+                      Others:{' '}
+                      <Link href="/dashboard/feature-flags" className="underline">
+                        Feature Flags
+                      </Link>
+                      .
+                    </>
+                  ) : null}
                 </p>
               ) : null}
             </div>
@@ -550,7 +619,7 @@ export default function AdsCampaignsPage() {
         </div>
       </div>
 
-      {canWrite && selectedIds.size > 0 ? (
+      {canModerate && selectedIds.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
           <span className="font-semibold text-blue-900">{selectedIds.size} selected</span>
           <button
@@ -606,7 +675,7 @@ export default function AdsCampaignsPage() {
           <DataTableHeader>
             <DataTableRow>
               <DataTableHead className="w-10">
-                {canWrite ? (
+                {canModerate ? (
                   <input
                     type="checkbox"
                     checked={rows.length > 0 && selectedIds.size === rows.length}
@@ -632,7 +701,7 @@ export default function AdsCampaignsPage() {
               return (
                 <DataTableRow key={row.id}>
                   <DataTableCell>
-                    {canWrite ? (
+                    {canModerate ? (
                       <input
                         type="checkbox"
                         checked={selectedIds.has(row.id)}
@@ -678,14 +747,25 @@ export default function AdsCampaignsPage() {
                           Review creative
                         </button>
                         {preview.href ? (
-                          <Link href={preview.href} className="block text-xs text-zinc-500 hover:underline">
-                            {preview.label}
-                          </Link>
+                          preview.external ? (
+                            <a
+                              href={preview.href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block truncate font-mono text-xs text-zinc-500 hover:underline"
+                            >
+                              {preview.label}
+                            </a>
+                          ) : (
+                            <Link href={preview.href} className="block text-xs text-zinc-500 hover:underline">
+                              {preview.label}
+                            </Link>
+                          )
                         ) : (
                           <p className="truncate text-xs text-zinc-500">{preview.label}</p>
                         )}
                         <p className="truncate text-[11px] text-zinc-400">
-                          {(row.placements || []).join(', ') || '—'}
+                          {(row.placements || []).join(', ') || '-'}
                         </p>
                       </div>
                     </div>
@@ -728,10 +808,10 @@ export default function AdsCampaignsPage() {
                   </DataTableCell>
                   <DataTableCell className="text-right">
                     <div className="flex flex-wrap justify-end gap-1.5">
-                      {!canWrite ? (
+                      {!canModerate && !canCredit ? (
                         <span className="text-[11px] text-zinc-400">Read only</span>
                       ) : null}
-                      {canWrite && canApprove(row) ? (
+                      {canModerate && canApprove(row) ? (
                         <button
                           type="button"
                           disabled={busy}
@@ -747,7 +827,7 @@ export default function AdsCampaignsPage() {
                           Approve
                         </button>
                       ) : null}
-                      {canWrite && row.status === 'pending_review' ? (
+                      {canModerate && row.status === 'pending_review' ? (
                         <button
                           type="button"
                           disabled={busy}
@@ -757,7 +837,7 @@ export default function AdsCampaignsPage() {
                           Reject
                         </button>
                       ) : null}
-                      {canWrite && row.status === 'active' ? (
+                      {canModerate && row.status === 'active' ? (
                         <button
                           type="button"
                           disabled={busy}
@@ -773,7 +853,7 @@ export default function AdsCampaignsPage() {
                           Pause
                         </button>
                       ) : null}
-                      {canWrite && canResume(row) ? (
+                      {canModerate && canResume(row) ? (
                         <button
                           type="button"
                           disabled={busy}
@@ -789,7 +869,7 @@ export default function AdsCampaignsPage() {
                           Resume
                         </button>
                       ) : null}
-                      {canWrite &&
+                      {canModerate &&
                       (row.status === 'active' || row.status === 'paused' || row.status === 'pending_review') ? (
                         <button
                           type="button"
@@ -806,7 +886,7 @@ export default function AdsCampaignsPage() {
                           End
                         </button>
                       ) : null}
-                      {canWrite && canIssueCredit(row) ? (
+                      {canCredit && canIssueCredit(row) ? (
                         <button
                           type="button"
                           disabled={busy}
@@ -819,7 +899,7 @@ export default function AdsCampaignsPage() {
                           Issue credit
                         </button>
                       ) : null}
-                      {row.seller_id ? (
+                      {row.seller_id && canOpenPath('/dashboard/users') ? (
                         <Link
                           href={`/dashboard/users?q=${encodeURIComponent(row.seller_id)}`}
                           className="rounded border border-zinc-200 px-2 py-1 text-xs text-zinc-600"
@@ -851,7 +931,7 @@ export default function AdsCampaignsPage() {
       <AdCreativeReviewModal
         open={!!reviewTarget}
         row={reviewTarget}
-        canWrite={canWrite}
+        canWrite={canModerate}
         onClose={() => setReviewTarget(null)}
         onApprove={() => {
           if (!reviewTarget) return
@@ -919,7 +999,7 @@ export default function AdsCampaignsPage() {
         impactSummary={
           pendingGate?.enabled
             ? 'Approved campaigns and house ads may begin serving to users in the rollout cohort.'
-            : 'Kill switch — no paid or house ads deliver until re-enabled.'
+            : 'Kill switch: no paid or house ads deliver until re-enabled.'
         }
         categoryOptions={[
           { value: 'launch', label: 'Launch / ramp' },

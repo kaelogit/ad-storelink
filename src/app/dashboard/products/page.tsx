@@ -108,11 +108,11 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
                   >
                     <td className="p-3 font-medium text-gray-900 max-w-[220px] truncate">{row.name}</td>
                     <td className="p-3 font-mono">
-                      {row.currency_code ?? '—'} {Number(row.price).toLocaleString()}
+                      {row.currency_code ?? '-'} {Number(row.price).toLocaleString()}
                     </td>
                     <td className="p-3">{row.stock_quantity}</td>
                     <td className="p-3">{row.seller_display_name}</td>
-                    <td className="p-3 text-gray-500">{row.location_country ?? '—'}</td>
+                    <td className="p-3 text-gray-500">{row.location_country ?? '-'}</td>
                     <td className="p-3">
                       {row.is_active ? (
                         <span className="text-green-600 font-bold">Yes</span>
@@ -121,7 +121,7 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
                       )}
                     </td>
                     <td className="p-3 text-gray-500">
-                      {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
+                      {row.created_at ? new Date(row.created_at).toLocaleDateString() : '-'}
                     </td>
                   </tr>
                 ))}
@@ -131,7 +131,7 @@ function ProductsTable({ countryCode }: { countryCode: string }) {
 
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-gray-200 pt-4">
             <p className="text-sm text-gray-600">
-              Showing <span className="font-semibold text-gray-900">{rangeStart}</span>–
+              Showing <span className="font-semibold text-gray-900">{rangeStart}</span>-
               <span className="font-semibold text-gray-900">{rangeEnd}</span>
               {hasNext ? ' · more on next page' : ''}
             </p>

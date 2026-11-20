@@ -9,6 +9,8 @@ import { PageHeader } from '../../../components/admin/PageHeader'
 import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
 import {
   DataTable,
   DataTableBody,
@@ -18,7 +20,16 @@ import {
   DataTableRow,
 } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 import type { AdminGroupChatRow } from '../../api/admin/groups/list/route'
+
+const GROUP_REASON_CATEGORIES = [
+  { value: 'abuse', label: 'Abuse / harassment' },
+  { value: 'spam', label: 'Spam / scam community' },
+  { value: 'policy', label: 'Policy violation' },
+  { value: 'safety', label: 'Safety / illegal content' },
+  { value: 'other', label: 'Other' },
+]
 
 function newIdempotencyKey() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -27,6 +38,9 @@ function newIdempotencyKey() {
 
 export default function AdminGroupsDeskPage() {
   const searchParams = useSearchParams()
+  const { role } = useAdminRole()
+  /** Matches archive / ban-create APIs */
+  const canModerateGroups = role === 'super_admin' || role === 'moderator'
   const initialGroupId = searchParams.get('groupId') || ''
   const initialHostId = searchParams.get('hostId') || ''
   const initialQ = searchParams.get('q') || initialGroupId
@@ -37,9 +51,9 @@ export default function AdminGroupsDeskPage() {
   const [rows, setRows] = useState<AdminGroupChatRow[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(initialGroupId || null)
-  const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
+  const [pendingAction, setPendingAction] = useState<'archive' | 'ban' | 'unban' | null>(null)
 
   const selected = useMemo(
     () => rows.find((row) => row.group_id === selectedId) ?? null,
@@ -49,33 +63,42 @@ export default function AdminGroupsDeskPage() {
   const runSearch = useCallback(async () => {
     setLoading(true)
     setFeedback(null)
-    const params = new URLSearchParams({ limit: '80', offset: '0' })
-    if (q.trim()) params.set('q', q.trim())
-    if (status !== 'all') params.set('status', status)
-    if (hostId.trim()) params.set('hostId', hostId.trim())
+    try {
+      const params = new URLSearchParams({ limit: '80', offset: '0' })
+      if (q.trim()) params.set('q', q.trim())
+      if (status !== 'all') params.set('status', status)
+      if (hostId.trim()) params.set('hostId', hostId.trim())
 
-    const response = await fetch(`/api/admin/groups/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Could not load groups.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch(`/api/admin/groups/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Could not load groups.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        setSelectedId(null)
+        return
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as { rows?: AdminGroupChatRow[] }
+      const nextRows = Array.isArray(payload.rows) ? payload.rows : []
+      setRows(nextRows)
+      setSelectedId((prev) => {
+        if (prev && nextRows.some((row) => row.group_id === prev)) return prev
+        return nextRows[0]?.group_id ?? null
+      })
+      setFeedback({
+        tone: 'info',
+        message: `Found ${nextRows.length} communit${nextRows.length === 1 ? 'y' : 'ies'}.`,
+      })
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Could not load groups.',
+      })
       setRows([])
       setSelectedId(null)
+    } finally {
       setLoading(false)
-      return
     }
-
-    const payload = (await response.json().catch(() => ({}))) as { rows?: AdminGroupChatRow[] }
-    const nextRows = Array.isArray(payload.rows) ? payload.rows : []
-    setRows(nextRows)
-    setSelectedId((prev) => {
-      if (prev && nextRows.some((row) => row.group_id === prev)) return prev
-      return nextRows[0]?.group_id ?? null
-    })
-    setFeedback({
-      tone: 'info',
-      message: `Found ${nextRows.length} communit${nextRows.length === 1 ? 'y' : 'ies'}.`,
-    })
-    setLoading(false)
   }, [hostId, q, status])
 
   useEffect(() => {
@@ -83,68 +106,58 @@ export default function AdminGroupsDeskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const forceArchive = async () => {
-    if (!selected) return
-    if (selected.status === 'archived') {
-      setFeedback({ tone: 'info', message: 'Already archived.' })
-      return
-    }
-    if (reason.trim().length < 8) {
-      setFeedback({ tone: 'error', message: 'Enter a reason (min 8 characters) before archiving.' })
-      return
-    }
+  const submitPendingAction = async ({ category, reason }: { category: string; reason: string }) => {
+    if (!selected || !pendingAction) return
     setBusy(true)
-    const response = await fetch('/api/admin/groups/archive', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': newIdempotencyKey(),
-      },
-      body: JSON.stringify({ groupId: selected.group_id, reason: reason.trim() }),
-    })
-    setBusy(false)
-    if (!response.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(response, 'Archive failed.') })
-      return
+    try {
+      if (pendingAction === 'archive') {
+        const response = await fetch('/api/admin/groups/archive', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-idempotency-key': newIdempotencyKey(),
+          },
+          body: JSON.stringify({
+            groupId: selected.group_id,
+            reason: `[${category}] ${reason.trim()}`,
+          }),
+        })
+        if (!response.ok) {
+          setFeedback({ tone: 'error', message: await parseApiError(response, 'Archive failed.') })
+          throw new Error('archive failed')
+        }
+        setFeedback({ tone: 'success', message: 'Community force-archived.' })
+      } else {
+        const banned = pendingAction === 'ban'
+        const response = await fetch('/api/admin/groups/ban-create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-idempotency-key': newIdempotencyKey(),
+          },
+          body: JSON.stringify({
+            userId: selected.host_seller_id,
+            banned,
+            reason: `[${category}] ${reason.trim()}`,
+          }),
+        })
+        if (!response.ok) {
+          setFeedback({
+            tone: 'error',
+            message: await parseApiError(response, banned ? 'Ban failed.' : 'Unban failed.'),
+          })
+          throw new Error('ban failed')
+        }
+        setFeedback({
+          tone: 'success',
+          message: banned ? 'Host banned from creating communities.' : 'Create ban lifted.',
+        })
+      }
+      setPendingAction(null)
+      await runSearch()
+    } finally {
+      setBusy(false)
     }
-    setFeedback({ tone: 'success', message: 'Community force-archived.' })
-    setReason('')
-    await runSearch()
-  }
-
-  const toggleCreateBan = async (banned: boolean) => {
-    if (!selected) return
-    if (banned && reason.trim().length < 8) {
-      setFeedback({ tone: 'error', message: 'Enter a reason (min 8 characters) before banning create.' })
-      return
-    }
-    setBusy(true)
-    const response = await fetch('/api/admin/groups/ban-create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': newIdempotencyKey(),
-      },
-      body: JSON.stringify({
-        userId: selected.host_seller_id,
-        banned,
-        reason: reason.trim() || undefined,
-      }),
-    })
-    setBusy(false)
-    if (!response.ok) {
-      setFeedback({
-        tone: 'error',
-        message: await parseApiError(response, banned ? 'Ban failed.' : 'Unban failed.'),
-      })
-      return
-    }
-    setFeedback({
-      tone: 'success',
-      message: banned ? 'Host banned from creating communities.' : 'Create ban lifted.',
-    })
-    setReason('')
-    await runSearch()
   }
 
   return (
@@ -239,23 +252,30 @@ export default function AdminGroupsDeskPage() {
                       <div className="text-xs text-slate-500">{row.join_policy}</div>
                     </DataTableCell>
                     <DataTableCell>
-                      <div>{row.host_display_name || row.host_slug || '—'}</div>
-                      <div className="text-xs text-slate-500">@{row.host_slug || '—'}</div>
+                      <div>{row.host_display_name || row.host_slug || '-'}</div>
+                      <div className="text-xs text-slate-500">@{row.host_slug || '-'}</div>
                     </DataTableCell>
                     <DataTableCell>
                       {row.member_count}/{row.member_cap}
                     </DataTableCell>
-                    <DataTableCell>{row.open_report_count}</DataTableCell>
                     <DataTableCell>
-                      <span
-                        className={
-                          row.status === 'active'
-                            ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800'
-                            : 'rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700'
-                        }
-                      >
-                        {row.status}
-                      </span>
+                      {row.open_report_count > 0 ? (
+                        <Link
+                          href="/dashboard/content-reports"
+                          className="font-semibold text-red-600 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {row.open_report_count}
+                        </Link>
+                      ) : (
+                        row.open_report_count
+                      )}
+                    </DataTableCell>
+                    <DataTableCell>
+                      <StatusBadge
+                        label={row.status}
+                        tone={row.status === 'active' ? 'success' : 'neutral'}
+                      />
                     </DataTableCell>
                   </DataTableRow>
                 ))}
@@ -288,64 +308,83 @@ export default function AdminGroupsDeskPage() {
                   <dt className="text-slate-500">Host</dt>
                   <dd className="font-medium">
                     <Link
-                      href={`/dashboard/users?userId=${selected.host_seller_id}`}
-                      className="text-emerald-700 underline dark:text-emerald-400"
+                      href={`/dashboard/users?q=${encodeURIComponent(selected.host_seller_id)}`}
+                      className="text-blue-600 underline hover:text-blue-700"
                     >
                       {selected.host_display_name || selected.host_slug || selected.host_seller_id}
                     </Link>
                     {selected.host_groups_create_banned ? (
-                      <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
-                        create banned
-                      </span>
+                      <StatusBadge label="create banned" tone="danger" />
                     ) : null}
                   </dd>
                 </div>
               </dl>
 
-              <label className="block text-sm">
-                <span className="mb-1 block text-slate-500">Moderation reason</span>
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-                  placeholder="Required for archive / ban (min 8 chars)"
-                />
-              </label>
-
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  disabled={busy || selected.status === 'archived'}
-                  onClick={() => void forceArchive()}
-                  className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  Force archive
-                </button>
-                {selected.host_groups_create_banned ? (
+              {canModerateGroups ? (
+                <div className="flex flex-col gap-2 border-t border-gray-100 pt-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Moderation
+                  </p>
                   <button
                     type="button"
-                    disabled={busy}
-                    onClick={() => void toggleCreateBan(false)}
-                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold dark:border-slate-700"
+                    disabled={busy || selected.status === 'archived'}
+                    onClick={() => setPendingAction('archive')}
+                    className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                   >
-                    Lift create ban
+                    Force archive
                   </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void toggleCreateBan(true)}
-                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200"
-                  >
-                    Ban host from creating communities
-                  </button>
-                )}
-              </div>
+                  {selected.host_groups_create_banned ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingAction('unban')}
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50"
+                    >
+                      Lift create ban
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingAction('ban')}
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800 hover:bg-rose-100"
+                    >
+                      Ban host from creating communities
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="border-t border-gray-100 pt-4 text-[11px] text-gray-400">
+                  Archive / create-ban requires moderator or super admin.
+                </p>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      <ActionReasonModal
+        open={pendingAction !== null}
+        title={
+          pendingAction === 'archive'
+            ? 'Force archive this community?'
+            : pendingAction === 'ban'
+              ? 'Ban host from creating communities?'
+              : 'Lift create ban?'
+        }
+        description={
+          pendingAction === 'archive'
+            ? 'Members lose access to this community until restored by engineering/ops.'
+            : pendingAction === 'ban'
+              ? 'Host cannot create new communities. Existing ones stay until archived separately.'
+              : 'Host may create communities again.'
+        }
+        impactSummary="Action is audited with your reason."
+        categoryOptions={GROUP_REASON_CATEGORIES}
+        submitting={busy}
+        onClose={() => setPendingAction(null)}
+        onSubmit={submitPendingAction}
+      />
     </div>
   )
 }

@@ -8,9 +8,9 @@ import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { parseApiError } from '../../../utils/http'
-import { createClient } from '../../../utils/supabase/client'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 import { SUPPORTED_COUNTRIES } from '../../../constants/SupportedCountries'
-import type { AdminRole } from '../../../types/admin'
 
 type GeoConfig = {
   mode?: 'strict_same_country' | 'allow_pairs' | 'open'
@@ -51,11 +51,10 @@ const REASON_CATEGORIES = [
 ]
 
 export default function GeoPolicyPage() {
-  const supabase = createClient()
-  const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
+  const { role: adminRole } = useAdminRole()
   const [config, setConfig] = useState<GeoConfig | null>(null)
   const [effectivePolicy, setEffectivePolicy] = useState<EffectivePolicy | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [pendingSave, setPendingSave] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
@@ -74,18 +73,6 @@ export default function GeoPolicyPage() {
 
   const canEdit = adminRole === 'super_admin'
 
-  useEffect(() => {
-    let mounted = true
-    const loadRole = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !mounted) return
-      const { data } = await supabase.from('admin_users').select('role').eq('id', user.id).maybeSingle()
-      if (mounted && data?.role) setAdminRole(data.role as AdminRole)
-    }
-    void loadRole()
-    return () => { mounted = false }
-  }, [supabase])
-
   const applyConfigToDraft = useCallback((next: GeoConfig | null) => {
     setConfig(next)
     setModeDraft(next?.mode ?? 'strict_same_country')
@@ -103,19 +90,28 @@ export default function GeoPolicyPage() {
 
   const loadConfig = useCallback(async () => {
     setLoading(true)
-    const response = await fetch('/api/admin/geo-policy/config')
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load geo policy.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const response = await fetch('/api/admin/geo-policy/config')
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load geo policy.')
+        setFeedback({ tone: 'error', message: msg })
+        applyConfigToDraft(null)
+        setEffectivePolicy(null)
+        return
+      }
+      const payload = (await response.json()) as { config?: GeoConfig; effectivePolicy?: EffectivePolicy }
+      applyConfigToDraft(payload.config ?? null)
+      setEffectivePolicy(payload.effectivePolicy ?? null)
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load geo policy.',
+      })
       applyConfigToDraft(null)
       setEffectivePolicy(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json()) as { config?: GeoConfig; effectivePolicy?: EffectivePolicy }
-    applyConfigToDraft(payload.config ?? null)
-    setEffectivePolicy(payload.effectivePolicy ?? null)
-    setLoading(false)
   }, [applyConfigToDraft])
 
   useEffect(() => {
@@ -149,31 +145,36 @@ export default function GeoPolicyPage() {
 
   const submitUpdate = async ({ category, reason }: { category: string; reason: string }) => {
     setSubmitting(true)
-    const response = await fetch('/api/admin/geo-policy/update', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': `geo-policy-${Date.now()}`,
-      },
-      body: JSON.stringify({
-        mode: modeDraft,
-        allowedPairs: pairsDraft,
-        blockSurfaces: surfacesDraft,
-        messageTitle: titleDraft || null,
-        messageBody: bodyDraft || null,
-        notes: notesDraft || null,
-        reason: `[${category}] ${reason}`,
-      }),
-    })
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to update geo policy.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const response = await fetch('/api/admin/geo-policy/update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `geo-policy-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          mode: modeDraft,
+          allowedPairs: pairsDraft,
+          blockSurfaces: surfacesDraft,
+          messageTitle: titleDraft || null,
+          messageBody: bodyDraft || null,
+          notes: notesDraft || null,
+          reason: `[${category}] ${reason}`,
+        }),
+      })
+      if (!response.ok) {
+        // Thrown so the reason modal shows the failure inline and stays open.
+        throw new Error(await parseApiError(response, 'Failed to update geo policy.'))
+      }
+      setPendingSave(false)
+      setFeedback({ tone: 'success', message: 'Geo visibility policy updated. Mobile clients pick this up within ~10 minutes.' })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update geo policy.'
+      setFeedback({ tone: 'error', message })
+      throw err instanceof Error ? err : new Error(message)
+    } finally {
       setSubmitting(false)
-      return
     }
-    setPendingSave(false)
-    setSubmitting(false)
-    setFeedback({ tone: 'success', message: 'Geo visibility policy updated. Mobile clients pick this up within ~10 minutes.' })
     await loadConfig()
   }
 
@@ -209,14 +210,14 @@ export default function GeoPolicyPage() {
               {displaySurfaces.map((surface) => (
                 <li key={surface.key}>
                   <span className="font-semibold">{surface.label}</span>
-                  {' — '}
+                  {': '}
                   {surface.mobile}
                 </li>
               ))}
             </ul>
             <p>{effectivePolicy?.deployNote ?? 'Policy changes apply at runtime via get_geo_visibility_config (no app deploy required after client helper ships).'}</p>
             <p className="border-t border-blue-200 pt-2 font-semibold">
-              Launched markets: NG, GH, KE, ZA — each is a separate marketplace. Ghana users cannot browse Nigerian sellers until you enable cross-border pairs or open mode here.
+              Launched markets: NG, GH, KE, ZA. Each is a separate marketplace. Ghana users cannot browse Nigerian sellers until you enable cross-border pairs or open mode here.
             </p>
           </div>
         </div>
@@ -227,6 +228,12 @@ export default function GeoPolicyPage() {
           <div className="flex items-center gap-2">
             <Globe className="h-4 w-4 text-gray-500" />
             <p className="text-xs font-bold uppercase tracking-widest text-gray-500">Platform policy</p>
+            {config ? (
+              <StatusBadge
+                label={MODE_OPTIONS.find((o) => o.value === (config.mode ?? 'strict_same_country'))?.label ?? 'Unknown'}
+                tone={(config.mode ?? 'strict_same_country') === 'open' ? 'warning' : 'info'}
+              />
+            ) : null}
           </div>
           <button
             type="button"
@@ -307,7 +314,7 @@ export default function GeoPolicyPage() {
               )}
             </div>
             {pairsDraft.length === 0 ? (
-              <p className="text-xs text-gray-500">No pairs whitelisted — all cross-country traffic remains blocked.</p>
+              <p className="text-xs text-gray-500">No pairs whitelisted. All cross-country traffic remains blocked.</p>
             ) : (
               <div className="space-y-2">
                 {pairsDraft.map((pair, index) => (

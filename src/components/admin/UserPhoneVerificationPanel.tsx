@@ -136,12 +136,12 @@ export function UserPhoneVerificationPanel({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div className="rounded-lg border border-gray-100 bg-white px-3 py-2">
             <p className="text-[10px] font-bold uppercase text-gray-400">Phone on profile</p>
-            <p className="font-mono font-bold text-gray-900">{status.phone_number || '—'}</p>
+            <p className="font-mono font-bold text-gray-900">{status.phone_number || '-'}</p>
           </div>
           <div className="rounded-lg border border-gray-100 bg-white px-3 py-2">
             <p className="text-[10px] font-bold uppercase text-gray-400">Verified at</p>
             <p className="font-semibold text-gray-900">
-              {status.phone_verified_at ? new Date(status.phone_verified_at).toLocaleString() : '—'}
+              {status.phone_verified_at ? new Date(status.phone_verified_at).toLocaleString() : '-'}
             </p>
           </div>
         </div>
@@ -154,7 +154,7 @@ export function UserPhoneVerificationPanel({
                 ? new Date(status.last_otp_attempt_at).toLocaleString()
                 : status.active_otp?.last_sent_at
                   ? new Date(status.active_otp.last_sent_at).toLocaleString()
-                  : '—'}
+                  : '-'}
             </p>
           </div>
           <div className="rounded-lg border border-gray-100 bg-white px-3 py-2">
@@ -172,7 +172,7 @@ export function UserPhoneVerificationPanel({
               Pending OTP for {status.active_otp.phone_e164}
             </p>
             <p className="mt-1 text-amber-800/90">
-              Sent {status.active_otp.last_sent_at ? new Date(status.active_otp.last_sent_at).toLocaleString() : '—'}
+              Sent {status.active_otp.last_sent_at ? new Date(status.active_otp.last_sent_at).toLocaleString() : '-'}
               {status.active_otp.is_expired ? ' · expired' : status.active_otp.expires_at ? ` · expires ${new Date(status.active_otp.expires_at).toLocaleString()}` : ''}
             </p>
           </div>
@@ -194,7 +194,7 @@ export function UserPhoneVerificationPanel({
                   <div className="text-right shrink-0">
                     <StatusBadge tone={eventTone(event.event_type)} label={event.event_type.split('_')[1] || 'evt'} />
                     <p className="text-[9px] text-gray-400 mt-1">
-                      {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
+                      {event.created_at ? new Date(event.created_at).toLocaleString() : '-'}
                     </p>
                   </div>
                 </div>

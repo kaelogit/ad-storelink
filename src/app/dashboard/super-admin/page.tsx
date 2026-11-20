@@ -403,7 +403,7 @@ export default function SuperAdminPage() {
                     </DataTableCell>
                     <DataTableCell>
                       <span className="text-xs text-gray-600 uppercase">
-                        {session.admin_role?.replace('_', ' ') ?? '—'}
+                        {session.admin_role?.replace('_', ' ') ?? '-'}
                       </span>
                     </DataTableCell>
                     <DataTableCell>
@@ -412,7 +412,7 @@ export default function SuperAdminPage() {
                       </span>
                     </DataTableCell>
                     <DataTableCell>
-                      <span className="text-xs text-gray-600">{session.ip ?? '—'}</span>
+                      <span className="text-xs text-gray-600">{session.ip ?? '-'}</span>
                     </DataTableCell>
                     <DataTableCell>
                       <span className="text-xs text-gray-600">

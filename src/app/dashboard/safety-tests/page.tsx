@@ -12,12 +12,18 @@ import {
   ClipboardCheck,
   ExternalLink,
   Play,
+  RefreshCcw,
 } from 'lucide-react'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { EscrowHealthPanel } from '../../../components/admin/EscrowHealthPanel'
 import { QaRunbookCards } from '../../../components/admin/QaRunbookCards'
-import { Card, CardContent, CardHeader, Badge } from '../../../components/ui'
+import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { EmptyState } from '../../../components/admin/EmptyState'
 import { STAGING_SMOKE_CHECKLIST } from '../../../constants/qaRunbooks'
+import { roleCanOpenPath } from '../../../constants/adminNavigation'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 type SafetyTestCase = {
   name: string
@@ -66,13 +72,48 @@ const CATEGORY_LABELS: Record<string, string> = {
   infra: 'Infrastructure',
 }
 
+const RUN_REASON_CATEGORIES = [
+  { value: 'pre_deploy', label: 'Pre-deploy check' },
+  { value: 'post_deploy', label: 'Post-deploy verification' },
+  { value: 'incident_investigation', label: 'Incident investigation' },
+  { value: 'routine', label: 'Routine health check' },
+  { value: 'other', label: 'Other' },
+]
+
+const SMOKE_STORAGE_KEY = 'storelink.qa.smoke.checked.v1'
+
 export default function QaHubPage() {
+  const { role, loading: roleLoading } = useAdminRole()
+  const canRun = role === 'super_admin'
   const [runs, setRuns] = useState<SafetyRun[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedSuites, setExpandedSuites] = useState<Record<string, boolean>>({})
   const [runningMode, setRunningMode] = useState<'live' | 'ci' | null>(null)
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [pendingMode, setPendingMode] = useState<'live' | 'ci' | null>(null)
+  const [checkedSmoke, setCheckedSmoke] = useState<Record<string, boolean>>({})
+  const [actionFeedback, setActionFeedback] = useState<{
+    tone: 'success' | 'error' | 'info'
+    message: string
+  } | null>(null)
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SMOKE_STORAGE_KEY)
+      if (raw) setCheckedSmoke(JSON.parse(raw) as Record<string, boolean>)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const persistSmoke = (next: Record<string, boolean>) => {
+    setCheckedSmoke(next)
+    try {
+      localStorage.setItem(SMOKE_STORAGE_KEY, JSON.stringify(next))
+    } catch {
+      /* ignore */
+    }
+  }
 
   const fetchRuns = useCallback(async () => {
     setLoading(true)
@@ -89,9 +130,12 @@ export default function QaHubPage() {
     }
   }, [])
 
-  const runTests = async (mode: 'live' | 'ci') => {
+  const runTests = async (
+    mode: 'live' | 'ci',
+    { category, reason }: { category: string; reason: string },
+  ) => {
     setRunningMode(mode)
-    setActionMessage(null)
+    setActionFeedback(null)
     try {
       const res = await fetch('/api/admin/safety-tests/run', {
         method: 'POST',
@@ -99,32 +143,48 @@ export default function QaHubPage() {
           'Content-Type': 'application/json',
           'x-idempotency-key': `safety-tests-${mode}-${Date.now()}`,
         },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, reason: `[${category}] ${reason}` }),
       })
-      const json = await res.json()
+      const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error || 'Failed to run tests')
+      setPendingMode(null)
       if (mode === 'live') {
-        setActionMessage(
-          json.run?.status === 'passed'
+        const passed = json.run?.status === 'passed'
+        setActionFeedback({
+          tone: passed ? 'success' : 'error',
+          message: passed
             ? `Live probes passed (${json.run.passed_tests}/${json.run.total_tests}).`
             : `Live probes failed (${json.run?.failed_tests ?? 0} failed).`,
-        )
+        })
         await fetchRuns()
       } else {
-        setActionMessage(json.message || 'CI suite dispatched. Refresh in a minute.')
+        setActionFeedback({
+          tone: 'success',
+          message: json.message || 'CI suite dispatched. Refresh in a minute.',
+        })
       }
     } catch (e) {
-      setActionMessage(e instanceof Error ? e.message : 'Failed to run tests')
+      const message = e instanceof Error ? e.message : 'Failed to run tests'
+      setActionFeedback({ tone: 'error', message })
+      throw e instanceof Error ? e : new Error(message)
     } finally {
       setRunningMode(null)
     }
   }
 
   useEffect(() => {
-    fetchRuns()
+    void fetchRuns()
   }, [fetchRuns])
 
   const latest = runs[0] ?? null
+
+  const smokeChecklist = useMemo(
+    () => STAGING_SMOKE_CHECKLIST.filter((item) => roleCanOpenPath(role, item.href)),
+    [role],
+  )
+
+  const smokeDone = smokeChecklist.filter((item) => checkedSmoke[item.href + item.label]).length
+  const smokeTotal = smokeChecklist.length
 
   const suitesByCategory = useMemo(() => {
     if (!latest?.suites?.length) return []
@@ -142,245 +202,361 @@ export default function QaHubPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 p-6">
       <PageHeader
         title="QA Hub"
-        subtitle="Runbooks, staging smoke paths, escrow health, and CI commerce safety tests — one place before risky deploys."
+        subtitle="Pre-deploy go/no-go: escrow health, staging smoke paths, and live/CI safety probes."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {canRun ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPendingMode('live')}
+                  disabled={!!runningMode}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-zinc-900 bg-zinc-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60"
+                >
+                  {runningMode === 'live' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" />
+                  )}
+                  Run live probes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingMode('ci')}
+                  disabled={!!runningMode}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                >
+                  {runningMode === 'ci' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" />
+                  )}
+                  Trigger CI
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
-              onClick={() => void runTests('live')}
-              disabled={!!runningMode}
-              className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60"
+              onClick={() => void fetchRuns()}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
             >
-              {runningMode === 'live' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              Run live probes
-            </button>
-            <button
-              type="button"
-              onClick={() => void runTests('ci')}
-              disabled={!!runningMode}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:opacity-60"
-            >
-              {runningMode === 'ci' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              Trigger CI suite
-            </button>
-            <button
-              type="button"
-              onClick={() => fetchRuns()}
-              className="text-sm font-medium text-[var(--primary)] hover:underline"
-            >
-              Refresh results
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCcw className="h-3.5 w-3.5" />
+              )}
+              Refresh
             </button>
           </div>
         }
       />
 
-      {actionMessage ? (
-        <p className="rounded-lg border border-gray-100 bg-white px-4 py-3 text-sm text-gray-800">{actionMessage}</p>
+      {!roleLoading && !canRun ? (
+        <ActionFeedback
+          tone="info"
+          message="Read-only for your role. Running live probes and triggering CI require super_admin."
+        />
       ) : null}
 
+      {actionFeedback ? (
+        <ActionFeedback tone={actionFeedback.tone} message={actionFeedback.message} />
+      ) : null}
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <EscrowHealthPanel />
+        <div className="rounded-xl border border-zinc-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-zinc-900">Latest probe / CI result</p>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Live probes hit taxonomy, embeddings, and DB from this desk. CI needs{' '}
+                <code className="rounded bg-zinc-100 px-1">GITHUB_TOKEN</code>.
+              </p>
+            </div>
+            {latest ? (
+              <StatusBadge
+                tone={latest.status === 'passed' ? 'success' : 'danger'}
+                label={latest.status === 'passed' ? 'Passed' : 'Failed'}
+              />
+            ) : (
+              <StatusBadge tone="neutral" label="No runs" />
+            )}
+          </div>
+
+          {loading && !latest ? (
+            <div className="mt-6 flex items-center gap-2 text-sm text-zinc-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading…
+            </div>
+          ) : error ? (
+            <p className="mt-4 text-sm text-red-600">{error}</p>
+          ) : !latest ? (
+            <div className="mt-6 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center">
+              <ShieldCheck className="mx-auto h-8 w-8 text-zinc-300" />
+              <p className="mt-2 text-sm font-semibold text-zinc-800">No test runs yet</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {canRun
+                  ? 'Run live probes to save a go/no-go snapshot before deploy.'
+                  : 'A super admin can run live probes from this desk.'}
+              </p>
+            </div>
+          ) : (
+            <dl className="mt-4 grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                <dt className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Score</dt>
+                <dd className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900">
+                  {latest.passed_tests}/{latest.total_tests} passed
+                </dd>
+              </div>
+              <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                <dt className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">When</dt>
+                <dd className="mt-0.5 text-sm font-semibold text-zinc-900">
+                  {latest.created_at ? new Date(latest.created_at).toLocaleString() : '—'}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                <dt className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                  Triggered by
+                </dt>
+                <dd className="mt-0.5 truncate text-sm font-semibold text-zinc-900">
+                  {latest.triggered_by}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                <dt className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                  Duration
+                </dt>
+                <dd className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900">
+                  {latest.duration_ms != null ? `${(latest.duration_ms / 1000).toFixed(1)}s` : '—'}
+                </dd>
+              </div>
+            </dl>
+          )}
+        </div>
+      </section>
+
       <section className="space-y-3">
-        <h2 className="text-base font-semibold text-[var(--foreground)]">Runbooks</h2>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900">Staging smoke paths</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Check off after migrations. Progress is saved in this browser.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <StatusBadge
+              tone={smokeDone === smokeTotal && smokeTotal > 0 ? 'success' : 'info'}
+              label={`${smokeDone}/${smokeTotal} done`}
+            />
+            {smokeDone > 0 ? (
+              <button
+                type="button"
+                onClick={() => persistSmoke({})}
+                className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-800"
+              >
+                Clear checks
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+          {smokeChecklist.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-zinc-500">
+              {roleLoading ? 'Loading…' : 'No smoke-path desks are available for your role.'}
+            </p>
+          ) : (
+            <ol className="divide-y divide-zinc-100">
+              {smokeChecklist.map((item, index) => {
+                const key = item.href + item.label
+                const checked = Boolean(checkedSmoke[key])
+                return (
+                  <li key={key} className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
+                    <button
+                      type="button"
+                      aria-pressed={checked}
+                      onClick={() => persistSmoke({ ...checkedSmoke, [key]: !checked })}
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${
+                        checked
+                          ? 'border-emerald-600 bg-emerald-600 text-white'
+                          : 'border-zinc-300 bg-white text-transparent'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                    <span className="w-5 shrink-0 text-[11px] tabular-nums text-zinc-400">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
+                    <ClipboardCheck
+                      className={`h-3.5 w-3.5 shrink-0 ${checked ? 'text-emerald-600' : 'text-zinc-400'}`}
+                    />
+                    <span
+                      className={`min-w-0 flex-1 text-sm ${
+                        checked ? 'text-zinc-400 line-through' : 'font-medium text-zinc-800'
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                    <Link
+                      href={item.href}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
+                    >
+                      Open
+                      <ExternalLink className="h-3 w-3 opacity-50" />
+                    </Link>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-900">Runbooks</h2>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Longer checklists live in the repo docs; links jump to the desks you need.
+          </p>
+        </div>
         <QaRunbookCards />
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-[var(--foreground)]">Staging smoke paths</h2>
-        <p className="text-sm text-[var(--muted)]">
-          Execute these in staging after migrations. Each link opens the admin desk where the check runs.
-        </p>
-        <Card>
-          <CardContent className="grid gap-2 p-4 sm:grid-cols-2">
-            {STAGING_SMOKE_CHECKLIST.map((item) => (
-              <Link
-                key={item.href + item.label}
-                href={item.href}
-                className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2.5 text-sm font-medium text-gray-800 hover:border-blue-200 hover:bg-blue-50/50"
-              >
-                <span className="flex items-center gap-2">
-                  <ClipboardCheck className="h-4 w-4 text-emerald-600" />
-                  {item.label}
-                </span>
-                <ExternalLink className="h-3.5 w-3.5 text-gray-400" />
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-[var(--foreground)]">Escrow health</h2>
-        <EscrowHealthPanel />
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-[var(--foreground)]">CI + live probe results</h2>
-          <p className="text-xs text-[var(--muted)]">
-            <strong>Run live probes</strong> checks taxonomy, embeddings, and DB from this desk.{' '}
-            <strong>Trigger CI suite</strong> dispatches GitHub{' '}
-            <code className="rounded bg-black/5 px-1">safety-tests.yml</code> when{' '}
-            <code className="rounded bg-black/5 px-1">GITHUB_TOKEN</code> is set.
-          </p>
-        </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-16 text-[var(--muted)]">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            Loading safety test results…
-          </div>
-        ) : error ? (
-          <Card>
-            <CardContent className="py-8 text-center text-red-600">{error}</CardContent>
-          </Card>
-        ) : !latest ? (
-          <Card>
-            <CardContent className="py-10 text-center text-[var(--muted)]">
-              <ShieldCheck className="mx-auto mb-3 h-10 w-10 opacity-40" />
-              <p className="font-medium">No test runs yet</p>
-              <p className="mt-1 text-sm">
-                Use <strong>Run live probes</strong> above, or trigger the Jest suite from CI.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-            <Card>
-              <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm text-[var(--muted)]">Latest CI run</p>
-                    <p className="text-lg font-semibold text-[var(--foreground)]">
-                      {latest.passed_tests}/{latest.total_tests} passed
-                    </p>
-                  </div>
-                  <Badge tone={latest.status === 'passed' ? 'success' : 'danger'}>
-                    {latest.status === 'passed' ? 'All passed' : `${latest.failed_tests} failed`}
-                  </Badge>
+      {latest?.suites?.length ? (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-zinc-900">Suites by category</h2>
+          <div className="space-y-3">
+            {suitesByCategory.map(([category, suites]) => (
+              <div key={category} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <div className="border-b border-zinc-100 px-4 py-3">
+                  <p className="text-sm font-semibold text-zinc-900">
+                    {CATEGORY_LABELS[category] || category}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {suites.filter((s) => s.status === 'passed').length}/{suites.length} suites passed
+                  </p>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-                  <div>
-                    <dt className="text-[var(--muted)]">Triggered by</dt>
-                    <dd className="font-medium">{latest.triggered_by}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--muted)]">Branch</dt>
-                    <dd className="font-medium">{latest.branch || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--muted)]">Duration</dt>
-                    <dd className="font-medium">
-                      {latest.duration_ms != null ? `${(latest.duration_ms / 1000).toFixed(1)}s` : '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--muted)]">When</dt>
-                    <dd className="font-medium">
-                      {latest.created_at ? new Date(latest.created_at).toLocaleString() : '—'}
-                    </dd>
-                  </div>
-                </dl>
-              </CardContent>
-            </Card>
-
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-[var(--foreground)]">Suites by category</h3>
-              {suitesByCategory.map(([category, suites]) => (
-                <Card key={category}>
-                  <CardHeader>
-                    <p className="font-semibold">{CATEGORY_LABELS[category] || category}</p>
-                    <p className="text-sm text-[var(--muted)]">
-                      {suites.filter((s) => s.status === 'passed').length}/{suites.length} suites passed
-                    </p>
-                  </CardHeader>
-                  <CardContent className="divide-y divide-[var(--border)] p-0">
-                    {suites.map((suite) => {
-                      const suiteKey = `${latest.id}-${suite.id}`
-                      const open = expandedSuites[suiteKey] ?? false
-                      return (
-                        <div key={suiteKey}>
-                          <button
-                            type="button"
-                            onClick={() => toggleSuite(suiteKey)}
-                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
-                          >
-                            {open ? (
-                              <ChevronDown className="h-4 w-4 shrink-0 text-[var(--muted)]" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 shrink-0 text-[var(--muted)]" />
-                            )}
-                            {suite.status === 'passed' ? (
-                              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                            ) : (
-                              <XCircle className="h-4 w-4 shrink-0 text-red-600" />
-                            )}
-                            <span className="flex-1 font-medium">{suite.name}</span>
-                            <span className="text-sm text-[var(--muted)]">
-                              {suite.passed}/{suite.passed + suite.failed} tests
-                            </span>
-                          </button>
-                          {open && (
-                            <ul className="border-t border-[var(--border)] bg-black/[0.015] px-4 py-2">
-                              {suite.tests.map((test) => (
-                                <li
-                                  key={test.name}
-                                  className="flex items-start gap-2 border-b border-[var(--border)] py-2 last:border-0"
-                                >
-                                  {test.status === 'passed' ? (
-                                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                                  ) : (
-                                    <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
-                                  )}
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-sm">{test.name}</p>
-                                    {test.failureMessages?.map((msg, i) => (
-                                      <pre
-                                        key={i}
-                                        className="mt-1 max-h-32 overflow-auto rounded bg-red-50 p-2 text-xs text-red-800"
-                                      >
-                                        {msg}
-                                      </pre>
-                                    ))}
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
+                <div className="divide-y divide-zinc-100">
+                  {suites.map((suite) => {
+                    const suiteKey = `${latest.id}-${suite.id}`
+                    const open = expandedSuites[suiteKey] ?? false
+                    return (
+                      <div key={suiteKey}>
+                        <button
+                          type="button"
+                          onClick={() => toggleSuite(suiteKey)}
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50"
+                        >
+                          {open ? (
+                            <ChevronDown className="h-4 w-4 shrink-0 text-zinc-400" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" />
                           )}
-                        </div>
-                      )
-                    })}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                          {suite.status === 'passed' ? (
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                          ) : (
+                            <XCircle className="h-4 w-4 shrink-0 text-red-600" />
+                          )}
+                          <span className="flex-1 text-sm font-medium text-zinc-900">{suite.name}</span>
+                          <span className="text-xs text-zinc-500">
+                            {suite.passed}/{suite.passed + suite.failed} tests
+                          </span>
+                        </button>
+                        {open ? (
+                          <ul className="border-t border-zinc-100 bg-zinc-50/80 px-4 py-2">
+                            {suite.tests.map((test) => (
+                              <li
+                                key={test.name}
+                                className="flex items-start gap-2 border-b border-zinc-100 py-2 last:border-0"
+                              >
+                                {test.status === 'passed' ? (
+                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                ) : (
+                                  <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm text-zinc-800">{test.name}</p>
+                                  {test.failureMessages?.map((msg, i) => (
+                                    <pre
+                                      key={i}
+                                      className="mt-1 max-h-32 overflow-auto rounded bg-red-50 p-2 text-xs text-red-800"
+                                    >
+                                      {msg}
+                                    </pre>
+                                  ))}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
 
-            {runs.length > 1 && (
-              <Card>
-                <CardHeader>
-                  <p className="font-semibold">Run history</p>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <ul className="divide-y divide-[var(--border)]">
-                    {runs.slice(1).map((run) => (
-                      <li key={run.id} className="flex items-center justify-between px-4 py-3 text-sm">
-                        <span>{new Date(run.created_at).toLocaleString()}</span>
-                        <span className="text-[var(--muted)]">
-                          {run.passed_tests}/{run.total_tests} · {run.triggered_by}
-                        </span>
-                        <Badge tone={run.status === 'passed' ? 'success' : 'danger'}>{run.status}</Badge>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            )}
-          </>
-        )}
-      </section>
+          {runs.length > 1 ? (
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+              <div className="border-b border-zinc-100 px-4 py-3">
+                <p className="text-sm font-semibold text-zinc-900">Run history</p>
+              </div>
+              <ul className="divide-y divide-zinc-100">
+                {runs.slice(1).map((run) => (
+                  <li
+                    key={run.id}
+                    className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm"
+                  >
+                    <span className="text-zinc-800">{new Date(run.created_at).toLocaleString()}</span>
+                    <span className="text-xs text-zinc-500">
+                      {run.passed_tests}/{run.total_tests} · {run.triggered_by}
+                    </span>
+                    <StatusBadge
+                      tone={run.status === 'passed' ? 'success' : 'danger'}
+                      label={run.status}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      ) : !loading && !latest ? (
+        <EmptyState
+          icon={ShieldCheck}
+          title="Results will show here"
+          message="After the first live probe or CI publish, suite breakdowns and history appear in this section."
+        />
+      ) : null}
+
+      <ActionReasonModal
+        open={pendingMode !== null}
+        title={pendingMode === 'ci' ? 'Trigger CI safety suite?' : 'Run live production probes?'}
+        description={
+          pendingMode === 'ci'
+            ? 'Dispatches the GitHub safety-tests workflow. This action is recorded in the admin audit log.'
+            : 'Runs read-only probes against the production database from this admin server. This action is recorded in the admin audit log.'
+        }
+        impactSummary={
+          pendingMode === 'ci'
+            ? 'Consumes GitHub Actions minutes; results appear here when the workflow finishes.'
+            : 'A new live-probe run is saved to the results history.'
+        }
+        categoryOptions={RUN_REASON_CATEGORIES}
+        submitting={!!runningMode}
+        onClose={() => {
+          if (!runningMode) setPendingMode(null)
+        }}
+        onSubmit={async (payload) => {
+          if (!pendingMode) return
+          await runTests(pendingMode, payload)
+        }}
+      />
     </div>
   )
 }

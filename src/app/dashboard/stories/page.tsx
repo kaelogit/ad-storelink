@@ -9,6 +9,7 @@ import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 type StoryRow = {
   story_id: string
@@ -69,6 +70,9 @@ type ActiveAction =
   | { mode: 'report'; row: StoryReportRow; action: 'dismiss' | 'hide' | 'remove' | 'reinstate' }
 
 export default function StoriesModerationPage() {
+  const { role } = useAdminRole()
+  const canModerate =
+    role === 'super_admin' || role === 'moderator' || role === 'support' || role === 'content'
   const [deskTab, setDeskTab] = useState<'live' | 'reports'>('live')
   const [storyRows, setStoryRows] = useState<StoryRow[]>([])
   const [reportRows, setReportRows] = useState<StoryReportRow[]>([])
@@ -81,34 +85,50 @@ export default function StoriesModerationPage() {
 
   const loadStories = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ scope: storyScope, limit: '120', offset: '0' })
-    const response = await fetch(`/api/admin/stories/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load live stories.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({ scope: storyScope, limit: '120', offset: '0' })
+      const response = await fetch(`/api/admin/stories/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load live stories.')
+        setFeedback({ tone: 'error', message: msg })
+        setStoryRows([])
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: StoryRow[] }
+      setStoryRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load live stories.',
+      })
       setStoryRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: StoryRow[] }
-    setStoryRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [storyScope])
 
   const loadReports = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ status: reportStatus, limit: '120', offset: '0' })
-    const response = await fetch(`/api/admin/stories/reports/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load story reports.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({ status: reportStatus, limit: '120', offset: '0' })
+      const response = await fetch(`/api/admin/stories/reports/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load story reports.')
+        setFeedback({ tone: 'error', message: msg })
+        setReportRows([])
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: StoryReportRow[] }
+      setReportRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load story reports.',
+      })
       setReportRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: StoryReportRow[] }
-    setReportRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [reportStatus])
 
   const refresh = useCallback(async () => {
@@ -261,6 +281,7 @@ export default function StoriesModerationPage() {
                       <span className="text-xs text-gray-700">{row.open_report_count}</span>
                     </DataTableCell>
                     <DataTableCell>
+                      {canModerate ? (
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => setActiveAction({ mode: 'story', row, action: 'hide' })}
@@ -274,13 +295,18 @@ export default function StoriesModerationPage() {
                         >
                           Remove
                         </button>
+                        {row.story_moderation_state !== 'active' ? (
                         <button
                           onClick={() => setActiveAction({ mode: 'story', row, action: 'reinstate' })}
                           className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
                         >
                           Reinstate
                         </button>
+                        ) : null}
                       </div>
+                      ) : (
+                        <span className="text-[11px] text-gray-400">Read-only</span>
+                      )}
                     </DataTableCell>
                   </DataTableRow>
                 ))}
@@ -332,6 +358,7 @@ export default function StoriesModerationPage() {
                     <span className="text-xs text-gray-700">@{row.seller_slug || 'store'}</span>
                   </DataTableCell>
                   <DataTableCell>
+                    {canModerate ? (
                     <div className="flex flex-wrap gap-2">
                       <button
                         onClick={() => setActiveAction({ mode: 'report', row, action: 'dismiss' })}
@@ -351,13 +378,18 @@ export default function StoriesModerationPage() {
                       >
                         Remove
                       </button>
+                      {row.story_moderation_state !== 'active' ? (
                       <button
                         onClick={() => setActiveAction({ mode: 'report', row, action: 'reinstate' })}
                         className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
                       >
                         Reinstate
                       </button>
+                      ) : null}
                     </div>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">Read-only</span>
+                    )}
                   </DataTableCell>
                 </DataTableRow>
               ))}

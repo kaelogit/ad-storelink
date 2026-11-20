@@ -154,7 +154,7 @@ export function UserCoinsPanel({
               <div key={row.id} className="flex items-start justify-between gap-2 text-[10px] border-b border-gray-50 pb-1.5 last:border-0 last:pb-0">
                 <div className="min-w-0">
                   <p className="font-bold text-gray-800">{formatLedgerType(row.type)}</p>
-                  <p className="text-gray-400 truncate">{row.description || '—'}</p>
+                  <p className="text-gray-400 truncate">{row.description || '-'}</p>
                   <p className="text-gray-300">{new Date(row.created_at).toLocaleString()}</p>
                 </div>
                 <p className={`font-black shrink-0 ${ledgerSign(row.type) === '-' ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -239,7 +239,7 @@ export function UserCoinsPanel({
                   <Plus size={14} />
                 </button>
               </div>
-              <p className="mt-1 text-[10px] text-gray-400">1 – 1,000,000 per action</p>
+              <p className="mt-1 text-[10px] text-gray-400">1 to 1,000,000 per action</p>
             </div>
           ) : undefined
         }

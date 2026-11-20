@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
-import { Card, CardHeader, CardContent, Badge } from '../../../components/ui'
+import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { EmptyState } from '../../../components/admin/EmptyState'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { Card, CardHeader, CardContent } from '../../../components/ui'
 import { Loader2, AlertCircle, Info } from 'lucide-react'
 
 type ObservabilityEvent = {
@@ -17,29 +20,42 @@ type ObservabilityEvent = {
 }
 
 export default function ObservabilityPage() {
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const [events, setEvents] = useState<ObservabilityEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [levelFilter, setLevelFilter] = useState('')
 
   const fetchEvents = useCallback(async () => {
     setLoading(true)
-    let q = supabase
-      .from('observability_events')
-      .select('id, user_id, source, event_name, level, metadata, created_at')
-      .order('created_at', { ascending: false })
-      .limit(200)
-    if (levelFilter) q = q.eq('level', levelFilter)
-    const { data } = await q
-    setEvents((data as ObservabilityEvent[]) ?? [])
-    setLoading(false)
-  }, [levelFilter])
+    setError(null)
+    try {
+      let q = supabase
+        .from('observability_events')
+        .select('id, user_id, source, event_name, level, metadata, created_at')
+        .order('created_at', { ascending: false })
+        .limit(200)
+      if (levelFilter) q = q.eq('level', levelFilter)
+      const { data, error: queryError } = await q
+      if (queryError) {
+        setError(queryError.message || 'Failed to load observability events.')
+        setEvents([])
+        return
+      }
+      setEvents((data as ObservabilityEvent[]) ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load observability events.')
+      setEvents([])
+    } finally {
+      setLoading(false)
+    }
+  }, [supabase, levelFilter])
 
   useEffect(() => {
     fetchEvents()
   }, [fetchEvents])
 
-  const levelTone = (level: string | null) => {
+  const levelTone = (level: string | null): 'danger' | 'warning' | 'neutral' => {
     if (level === 'error' || level === 'critical') return 'danger'
     if (level === 'warn') return 'warning'
     return 'neutral'
@@ -59,6 +75,8 @@ export default function ObservabilityPage() {
           </button>
         }
       />
+
+      {error ? <ActionFeedback tone="error" message={error} /> : null}
 
       <Card>
         <CardHeader>
@@ -95,14 +113,12 @@ export default function ObservabilityPage() {
                     ) : (
                       <Info className="h-4 w-4 text-[var(--muted)]" />
                     )}
-                    <Badge tone={levelTone(ev.level) as 'success' | 'danger' | 'warning' | 'neutral'}>
-                      {ev.level ?? '—'}
-                    </Badge>
+                    <StatusBadge tone={levelTone(ev.level)} label={ev.level ?? '-'} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[var(--foreground)]">{ev.event_name ?? '—'}</p>
+                    <p className="text-sm font-medium text-[var(--foreground)]">{ev.event_name ?? '-'}</p>
                     <p className="text-xs text-[var(--muted)]">
-                      {ev.source ?? '—'} · {ev.created_at ? new Date(ev.created_at).toLocaleString() : '—'}
+                      {ev.source ?? '-'} · {ev.created_at ? new Date(ev.created_at).toLocaleString() : '-'}
                     </p>
                     {ev.metadata && Object.keys(ev.metadata).length > 0 && (
                       <pre className="mt-2 text-xs bg-[var(--background)] p-2 rounded overflow-x-auto max-h-24 overflow-y-auto">
@@ -114,8 +130,10 @@ export default function ObservabilityPage() {
               ))}
             </div>
           )}
-          {!loading && events.length === 0 && (
-            <div className="py-12 text-center text-[var(--muted)]">No events in this range.</div>
+          {!loading && !error && events.length === 0 && (
+            <div className="p-4">
+              <EmptyState title="No events" message="No events in this range." />
+            </div>
           )}
         </CardContent>
       </Card>

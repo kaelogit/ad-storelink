@@ -19,6 +19,7 @@ import {
 } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
 import { createClient } from '../../../utils/supabase/client'
+import { allowedRolesForPath } from '../../../constants/adminNavigation'
 import type { AdminRole } from '../../../types/admin'
 import type { LoyaltySellerRow } from '../../api/admin/loyalty/list/route'
 
@@ -63,7 +64,7 @@ export default function LoyaltyProgramPage() {
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
   const [rows, setRows] = useState<LoyaltySellerRow[]>([])
   const [config, setConfig] = useState<LoyaltyConfig | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [query, setQuery] = useState('')
   const [enabledOnly, setEnabledOnly] = useState(false)
@@ -75,6 +76,10 @@ export default function LoyaltyProgramPage() {
 
   const canEditPlatform = adminRole === 'super_admin' || adminRole === 'finance'
   const canEditSeller = adminRole === 'super_admin' || adminRole === 'finance' || adminRole === 'support'
+  const canOpenUsers = (() => {
+    const allowed = allowedRolesForPath('/dashboard/users')
+    return !!allowed && !!adminRole && allowed.includes(adminRole)
+  })()
 
   const allowedPercentages = useMemo(() => {
     const raw = config?.allowed_percentages
@@ -98,33 +103,39 @@ export default function LoyaltyProgramPage() {
 
   const loadDesk = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ limit: '150', offset: '0', q: query.trim() })
-    if (enabledOnly) params.set('enabled', '1')
+    try {
+      const params = new URLSearchParams({ limit: '150', offset: '0', q: query.trim() })
+      if (enabledOnly) params.set('enabled', '1')
 
-    const response = await fetch(`/api/admin/loyalty/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load loyalty desk.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch(`/api/admin/loyalty/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load loyalty desk.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        setConfig(null)
+        return
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: LoyaltySellerRow[]
+        config?: LoyaltyConfig
+      }
+      setRows(Array.isArray(payload.rows) ? payload.rows : [])
+      const nextConfig = payload.config ?? null
+      setConfig(nextConfig)
+      if (nextConfig?.platform_max_percentage != null) {
+        setPlatformMaxDraft(String(nextConfig.platform_max_percentage))
+      }
+      if (typeof nextConfig?.notes === 'string') {
+        setNotesDraft(nextConfig.notes)
+      }
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load loyalty desk.' })
       setRows([])
       setConfig(null)
+    } finally {
       setLoading(false)
-      return
     }
-
-    const payload = (await response.json()) as {
-      rows?: LoyaltySellerRow[]
-      config?: LoyaltyConfig
-    }
-    setRows(Array.isArray(payload.rows) ? payload.rows : [])
-    const nextConfig = payload.config ?? null
-    setConfig(nextConfig)
-    if (nextConfig?.platform_max_percentage != null) {
-      setPlatformMaxDraft(String(nextConfig.platform_max_percentage))
-    }
-    if (typeof nextConfig?.notes === 'string') {
-      setNotesDraft(nextConfig.notes)
-    }
-    setLoading(false)
   }, [enabledOnly, query])
 
   useEffect(() => {
@@ -134,64 +145,78 @@ export default function LoyaltyProgramPage() {
   const enabledCount = useMemo(() => rows.filter((r) => r.loyalty_enabled).length, [rows])
 
   const submitPlatformUpdate = async ({ category, reason }: { category: string; reason: string }) => {
-    if (!pendingPlatform) return
+    if (!pendingPlatform || !canEditPlatform) return
     setSubmitting(true)
-    const response = await fetch('/api/admin/loyalty/platform-config', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': `loyalty-platform-${Date.now()}`,
-      },
-      body: JSON.stringify({
-        platformMaxPercentage: pendingPlatform.platformMaxPercentage,
-        notes: pendingPlatform.notes,
-        reason: `[${category}] ${reason}`,
-      }),
-    })
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to update platform loyalty config.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const response = await fetch('/api/admin/loyalty/platform-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `loyalty-platform-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          platformMaxPercentage: pendingPlatform.platformMaxPercentage,
+          notes: pendingPlatform.notes,
+          reason: `[${category}] ${reason}`,
+        }),
+      })
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to update platform loyalty config.')
+        setFeedback({ tone: 'error', message: msg })
+        return
+      }
+      setPendingPlatform(null)
+      setFeedback({ tone: 'success', message: 'Platform loyalty max updated.' })
+      await loadDesk()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update platform loyalty config.',
+      })
+    } finally {
       setSubmitting(false)
-      return
     }
-    setPendingPlatform(null)
-    setSubmitting(false)
-    setFeedback({ tone: 'success', message: 'Platform loyalty max updated.' })
-    await loadDesk()
   }
 
   const submitSellerUpdate = async ({ category, reason }: { category: string; reason: string }) => {
-    if (!pendingSeller) return
+    if (!pendingSeller || !canEditSeller) return
     setSubmitting(true)
-    const capRaw = pendingSeller.loyaltyMaxPercentage.trim()
-    const capValue = capRaw === '' ? null : Number(capRaw)
+    try {
+      const capRaw = pendingSeller.loyaltyMaxPercentage.trim()
+      const capValue = capRaw === '' ? null : Number(capRaw)
 
-    const response = await fetch('/api/admin/loyalty/seller', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': `loyalty-seller-${pendingSeller.row.seller_id}-${Date.now()}`,
-      },
-      body: JSON.stringify({
-        sellerId: pendingSeller.row.seller_id,
-        loyaltyMaxPercentage: pendingSeller.clearSellerCap ? null : capValue,
-        clearSellerCap: pendingSeller.clearSellerCap,
-        loyaltyEnabled: pendingSeller.loyaltyEnabled,
-        loyaltyPercentage: pendingSeller.loyaltyEnabled ? pendingSeller.loyaltyPercentage : 0,
-        reasonCategory: category,
-        reason,
-      }),
-    })
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to update seller loyalty settings.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch('/api/admin/loyalty/seller', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `loyalty-seller-${pendingSeller.row.seller_id}-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          sellerId: pendingSeller.row.seller_id,
+          loyaltyMaxPercentage: pendingSeller.clearSellerCap ? null : capValue,
+          clearSellerCap: pendingSeller.clearSellerCap,
+          loyaltyEnabled: pendingSeller.loyaltyEnabled,
+          loyaltyPercentage: pendingSeller.loyaltyEnabled ? pendingSeller.loyaltyPercentage : 0,
+          reasonCategory: category,
+          reason,
+        }),
+      })
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to update seller loyalty settings.')
+        setFeedback({ tone: 'error', message: msg })
+        return
+      }
+      setPendingSeller(null)
+      setFeedback({ tone: 'success', message: 'Seller loyalty settings updated.' })
+      await loadDesk()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update seller loyalty settings.',
+      })
+    } finally {
       setSubmitting(false)
-      return
     }
-    setPendingSeller(null)
-    setSubmitting(false)
-    setFeedback({ tone: 'success', message: 'Seller loyalty settings updated.' })
-    await loadDesk()
   }
 
   const tabClass = (active: boolean) =>
@@ -203,7 +228,7 @@ export default function LoyaltyProgramPage() {
     <div className="space-y-6">
       <PageHeader
         title="Loyalty Program"
-        subtitle="Platform reward caps and seller loyalty settings — mirrors mobile seller Store Rewards (1%, 2%, 5%)."
+        subtitle="Platform reward caps and seller loyalty settings. Mirrors mobile seller Store Rewards (1%, 2%, 5%)."
       />
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
 
@@ -324,9 +349,16 @@ export default function LoyaltyProgramPage() {
               {rows.map((row) => (
                 <DataTableRow key={row.seller_id}>
                   <DataTableCell>
-                    <Link href={`/dashboard/users?userId=${row.seller_id}`} className="text-sm font-bold text-blue-600 hover:underline">
-                      @{row.slug || 'seller'}
-                    </Link>
+                    {canOpenUsers ? (
+                      <Link
+                        href={`/dashboard/users?q=${encodeURIComponent(row.seller_id)}`}
+                        className="text-sm font-bold text-blue-600 hover:underline"
+                      >
+                        @{row.slug || 'seller'}
+                      </Link>
+                    ) : (
+                      <span className="text-sm font-bold text-gray-900">@{row.slug || 'seller'}</span>
+                    )}
                     <p className="text-[10px] text-gray-500">{row.email || row.seller_id.slice(0, 8)}</p>
                   </DataTableCell>
                   <DataTableCell>
@@ -346,7 +378,7 @@ export default function LoyaltyProgramPage() {
                       Platform max: <span className="font-mono font-bold">{row.platform_max_percentage}%</span>
                     </p>
                     <p className="text-[10px] text-gray-500">
-                      Seller cap: {row.loyalty_max_percentage != null ? `${row.loyalty_max_percentage}%` : '—'}
+                      Seller cap: {row.loyalty_max_percentage != null ? `${row.loyalty_max_percentage}%` : '-'}
                     </p>
                   </DataTableCell>
                   <DataTableCell>
@@ -386,7 +418,7 @@ export default function LoyaltyProgramPage() {
         open={pendingPlatform !== null}
         title="Update platform loyalty max?"
         description="Sellers above the new cap will be clamped automatically."
-        impactSummary={`Sets platform_max_percentage to ${pendingPlatform?.platformMaxPercentage ?? '—'}%. Matches mobile seller reward ceiling.`}
+        impactSummary={`Sets platform_max_percentage to ${pendingPlatform?.platformMaxPercentage ?? '-'}%. Matches mobile seller reward ceiling.`}
         categoryOptions={PLATFORM_REASON_CATEGORIES}
         submitting={submitting}
         onClose={() => setPendingPlatform(null)}

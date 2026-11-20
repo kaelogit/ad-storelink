@@ -1,9 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '../../../utils/supabase/client'
 import { PageHeader } from '../../../components/admin/PageHeader'
-import { Button, Card, CardHeader, CardContent, Input, Badge } from '../../../components/ui'
+import { ActionFeedback } from '../../../components/admin/ActionFeedback'
+import { EmptyState } from '../../../components/admin/EmptyState'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { parseApiError } from '../../../utils/http'
+import { Button, Card, CardHeader, CardContent, Input } from '../../../components/ui'
 import { DataTable, DataTableHeader, DataTableBody, DataTableRow, DataTableHead, DataTableCell } from '../../../components/ui'
 import { Search, Download, Loader2 } from 'lucide-react'
 import type { AdminAuditLog } from '../../../types/admin'
@@ -31,7 +35,8 @@ const ACTION_TYPES = [
 ]
 
 export default function AuditLogPage() {
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [logs, setLogs] = useState<AdminAuditLog[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -43,18 +48,33 @@ export default function AuditLogPage() {
 
   const fetchLogs = useCallback(async () => {
     setLoading(true)
-    let q = supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(500)
-    if (dateFrom) q = q.gte('created_at', dateFrom)
-    if (dateTo) q = q.lte('created_at', dateTo)
-    if (actionFilter) q = q.eq('action_type', actionFilter)
-    const { data } = await q
-    setLogs((data as AdminAuditLog[]) ?? [])
-    setLoading(false)
-  }, [dateFrom, dateTo, actionFilter])
+    setFeedback(null)
+    try {
+      let q = supabase
+        .from('admin_audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500)
+      if (dateFrom) q = q.gte('created_at', dateFrom)
+      if (dateTo) q = q.lte('created_at', dateTo)
+      if (actionFilter) q = q.eq('action_type', actionFilter)
+      const { data, error } = await q
+      if (error) {
+        setFeedback({ tone: 'error', message: error.message || 'Failed to load audit logs.' })
+        setLogs([])
+        return
+      }
+      setLogs((data as AdminAuditLog[]) ?? [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load audit logs.',
+      })
+      setLogs([])
+    } finally {
+      setLoading(false)
+    }
+  }, [supabase, dateFrom, dateTo, actionFilter])
 
   const detailsToText = (details: unknown): string => {
     if (details == null) return ''
@@ -81,13 +101,14 @@ export default function AuditLogPage() {
 
   const handleExport = async () => {
     setExporting(true)
+    setFeedback(null)
     try {
       const params = new URLSearchParams()
       if (dateFrom) params.set('from', dateFrom)
       if (dateTo) params.set('to', dateTo)
       if (actionFilter) params.set('action_type', actionFilter)
       const res = await fetch(`/api/admin/audit/export?${params.toString()}`)
-      if (!res.ok) throw new Error('Export failed')
+      if (!res.ok) throw new Error(await parseApiError(res, 'Export failed.'))
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -95,10 +116,12 @@ export default function AuditLogPage() {
       a.download = `audit-log-${dateFrom || 'all'}-${dateTo || 'all'}.csv`
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
-      // ignore
+      setFeedback({ tone: 'success', message: 'Audit log export downloaded.' })
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Export failed.' })
+    } finally {
+      setExporting(false)
     }
-    setExporting(false)
   }
 
   return (
@@ -113,6 +136,8 @@ export default function AuditLogPage() {
           </Button>
         }
       />
+
+      {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
 
       <Card>
         <CardHeader>
@@ -180,13 +205,13 @@ export default function AuditLogPage() {
                     <DataTableCell className="whitespace-nowrap text-xs text-[var(--muted)]">
                       {new Date(log.created_at).toLocaleString()}
                     </DataTableCell>
-                    <DataTableCell className="font-medium">{log.admin_email ?? '—'}</DataTableCell>
+                    <DataTableCell className="font-medium">{log.admin_email ?? '-'}</DataTableCell>
                     <DataTableCell>
-                      <Badge tone="neutral">{log.action_type}</Badge>
+                      <StatusBadge tone="neutral" label={log.action_type} />
                     </DataTableCell>
-                    <DataTableCell className="text-xs text-[var(--muted)]">{log.target_id ?? '—'}</DataTableCell>
+                    <DataTableCell className="text-xs text-[var(--muted)]">{log.target_id ?? '-'}</DataTableCell>
                     <DataTableCell className="max-w-md truncate text-xs">
-                      {log.details == null ? '—' : detailsToText(log.details)}
+                      {log.details == null ? '-' : detailsToText(log.details)}
                     </DataTableCell>
                   </DataTableRow>
                 ))}
@@ -194,8 +219,11 @@ export default function AuditLogPage() {
             </DataTable>
           )}
           {!loading && filteredLogs.length === 0 && (
-            <div className="py-12 text-center text-[var(--muted)]">
-              {logs.length === 0 ? 'No audit logs in this range.' : 'No logs match your search.'}
+            <div className="p-4">
+              <EmptyState
+                title={logs.length === 0 ? 'No audit logs' : 'No matches'}
+                message={logs.length === 0 ? 'No audit logs in this range.' : 'No logs match your search.'}
+              />
             </div>
           )}
         </CardContent>

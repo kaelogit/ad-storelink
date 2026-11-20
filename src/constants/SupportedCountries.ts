@@ -28,3 +28,9 @@ export const DEFAULT_COUNTRY_CODE = 'NG';
 export function getCountryByCode(code: string): SupportedCountry | undefined {
   return SUPPORTED_COUNTRIES.find((c) => c.code === code);
 }
+
+/** Currency for a country filter code. Falls back to NGN; never use for ALL (mixed-currency). */
+export function currencyForCountryCode(code: string | null | undefined): string {
+  if (!code || code === ALL_COUNTRIES_CODE) return 'NGN'
+  return getCountryByCode(code)?.currency || 'NGN'
+}

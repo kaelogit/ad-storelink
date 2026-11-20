@@ -5,6 +5,7 @@ import { Loader2, Plus, Sparkles } from 'lucide-react'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
 import { Card, CardHeader, CardContent, Button, Input } from '../../../components/ui'
 import { parseApiError } from '../../../utils/http'
 import {
@@ -32,6 +33,14 @@ const PLACEMENT_OPTIONS = [
   { id: 'home_card', label: 'Home' },
 ] as const
 
+function houseStatusTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' | 'info' {
+  if (status === 'active') return 'success'
+  if (status === 'paused') return 'info'
+  if (status === 'ended') return 'neutral'
+  if (status === 'draft') return 'warning'
+  return 'neutral'
+}
+
 export default function HouseAdsPage() {
   const { canWrite } = useAdminRole()
   const [campaigns, setCampaigns] = useState<HouseCampaign[]>([])
@@ -55,15 +64,24 @@ export default function HouseAdsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await fetch('/api/admin/house-ads/list')
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load house ads.') })
+    try {
+      const res = await fetch('/api/admin/house-ads/list')
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Failed to load house ads.') })
+        setCampaigns([])
+        return
+      }
+      const data = await res.json()
+      setCampaigns(Array.isArray(data?.campaigns) ? data.campaigns : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load house ads.',
+      })
+      setCampaigns([])
+    } finally {
       setLoading(false)
-      return
     }
-    const data = await res.json()
-    setCampaigns(Array.isArray(data?.campaigns) ? data.campaigns : [])
-    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -80,7 +98,7 @@ export default function HouseAdsPage() {
     setImageHint(tpl.imageHint || null)
     setFeedback({
       tone: 'info',
-      message: `Preset “${tpl.label}” loaded — paste an image URL and publish.`,
+      message: `Preset “${tpl.label}” loaded. Paste an image URL and publish.`,
     })
   }
 
@@ -101,147 +119,165 @@ export default function HouseAdsPage() {
     }
     setSaving(true)
     setFeedback({ tone: 'info', message: 'Creating house ad…' })
-    const res = await fetch('/api/admin/house-ads/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name.trim() || headline.trim() || 'StoreLink house ad',
-        imageUrl: imageUrl.trim(),
-        headline: headline.trim() || null,
-        deeplink: deeplink.trim() || null,
-        placements,
-        countryCode: countryCode.trim() || 'NG',
-        activate: true,
-      }),
-    })
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Create failed.') })
+    try {
+      const res = await fetch('/api/admin/house-ads/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim() || headline.trim() || 'StoreLink house ad',
+          imageUrl: imageUrl.trim(),
+          headline: headline.trim() || null,
+          deeplink: deeplink.trim() || null,
+          placements,
+          countryCode: countryCode.trim() || 'NG',
+          activate: true,
+        }),
+      })
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Create failed.') })
+        return
+      }
+      setFeedback({ tone: 'success', message: 'House ad is live (no Paystack).' })
+      setName('')
+      setImageUrl('')
+      setHeadline('')
+      setActiveTemplateId(null)
+      setImageHint(null)
+      await load()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Create failed.',
+      })
+    } finally {
       setSaving(false)
-      return
     }
-    setFeedback({ tone: 'success', message: 'House ad is live (no Paystack).' })
-    setName('')
-    setImageUrl('')
-    setHeadline('')
-    setActiveTemplateId(null)
-    setImageHint(null)
-    setSaving(false)
-    await load()
   }
 
   const setStatus = async (campaignId: string, status: string) => {
     setSaving(true)
-    const res = await fetch('/api/admin/house-ads/status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId, status }),
-    })
-    if (!res.ok) {
-      setFeedback({ tone: 'error', message: await parseApiError(res, 'Status update failed.') })
+    try {
+      const res = await fetch('/api/admin/house-ads/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId, status }),
+      })
+      if (!res.ok) {
+        setFeedback({ tone: 'error', message: await parseApiError(res, 'Status update failed.') })
+        return
+      }
+      setFeedback({ tone: 'success', message: `Campaign set to ${status}.` })
+      setPendingStatus(null)
+      await load()
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Status update failed.',
+      })
+    } finally {
       setSaving(false)
-      return
     }
-    setFeedback({ tone: 'success', message: `Campaign set to ${status}.` })
-    setSaving(false)
-    setPendingStatus(null)
-    await load()
   }
 
   return (
     <div className="space-y-6 p-6">
       <PageHeader
         title="House ads"
-        subtitle="Platform banners for Discover and Home. Use a launch preset, paste an image, publish — under 5 minutes. Requires ads_enabled."
+        subtitle="Platform banners for Discover and Home. Use a launch preset, paste an image, publish in under 5 minutes. Requires ads_enabled."
       />
 
       {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
       {!canWrite ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          Analyst view — create and status actions are hidden.
+          Analyst view. Create and status actions are hidden.
         </p>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4" />
-            <h2 className="text-sm font-semibold">Launch presets</h2>
-          </div>
-          <p className="mt-1 text-xs text-zinc-500">
-            One tap fills copy and deeplink. You only need a HTTPS image URL.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {HOUSE_AD_TEMPLATES.map((tpl) => {
-              const on = activeTemplateId === tpl.id
-              return (
-                <button
-                  key={tpl.id}
-                  type="button"
-                  onClick={() => applyTemplate(tpl)}
-                  className={`rounded-lg border p-3 text-left transition ${
-                    on
-                      ? 'border-emerald-500 bg-emerald-50'
-                      : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50'
-                  }`}
-                >
-                  <p className="text-sm font-semibold text-zinc-900">{tpl.label}</p>
-                  <p className="mt-0.5 text-xs text-zinc-500">{tpl.description}</p>
-                  <p className="mt-2 truncate font-mono text-[11px] text-zinc-400">{tpl.deeplink}</p>
-                </button>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
+      {canWrite ? (
+        <>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4" />
+                <h2 className="text-sm font-semibold">Launch presets</h2>
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                One tap fills copy and deeplink. You only need a HTTPS image URL.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {HOUSE_AD_TEMPLATES.map((tpl) => {
+                  const on = activeTemplateId === tpl.id
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => applyTemplate(tpl)}
+                      className={`rounded-lg border p-3 text-left transition ${
+                        on
+                          ? 'border-emerald-500 bg-emerald-50'
+                          : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold text-zinc-900">{tpl.label}</p>
+                      <p className="mt-0.5 text-xs text-zinc-500">{tpl.description}</p>
+                      <p className="mt-2 truncate font-mono text-[11px] text-zinc-400">{tpl.deeplink}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            <h2 className="text-sm font-semibold">Create house campaign</h2>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input placeholder="Internal name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input placeholder="Headline (shown on card)" value={headline} onChange={(e) => setHeadline(e.target.value)} />
-          <div>
-            <Input placeholder="Image URL (HTTPS)" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
-            {imageHint ? <p className="mt-1 text-xs text-zinc-500">Art tip: {imageHint}</p> : null}
-          </div>
-          <Input
-            placeholder="Deeplink e.g. /seller/what-is-selling"
-            value={deeplink}
-            onChange={(e) => setDeeplink(e.target.value)}
-          />
-          <Input
-            placeholder="Country code"
-            value={countryCode}
-            onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
-          />
-          <div className="flex flex-wrap gap-2">
-            {PLACEMENT_OPTIONS.map((opt) => {
-              const on = placements.includes(opt.id)
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => togglePlacement(opt.id)}
-                  className={`rounded-md border px-3 py-1.5 text-sm ${
-                    on ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-zinc-200 text-zinc-600'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              )
-            })}
-          </div>
-          <Button onClick={() => void create()} disabled={saving || !canWrite}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Publish house ad'}
-          </Button>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                <h2 className="text-sm font-semibold">Create house campaign</h2>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Input placeholder="Internal name" value={name} onChange={(e) => setName(e.target.value)} />
+              <Input placeholder="Headline (shown on card)" value={headline} onChange={(e) => setHeadline(e.target.value)} />
+              <div>
+                <Input placeholder="Image URL (HTTPS)" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
+                {imageHint ? <p className="mt-1 text-xs text-zinc-500">Art tip: {imageHint}</p> : null}
+              </div>
+              <Input
+                placeholder="Deeplink e.g. /seller/what-is-selling"
+                value={deeplink}
+                onChange={(e) => setDeeplink(e.target.value)}
+              />
+              <Input
+                placeholder="Country code"
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
+              />
+              <div className="flex flex-wrap gap-2">
+                {PLACEMENT_OPTIONS.map((opt) => {
+                  const on = placements.includes(opt.id)
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => togglePlacement(opt.id)}
+                      className={`rounded-md border px-3 py-1.5 text-sm ${
+                        on ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-zinc-200 text-zinc-600'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <Button onClick={() => void create()} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Publish house ad'}
+              </Button>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -267,12 +303,15 @@ export default function HouseAdsPage() {
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-zinc-900">{c.name}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-medium text-zinc-900">{c.name}</p>
+                      <StatusBadge tone={houseStatusTone(c.status)} label={c.status} />
+                    </div>
                     <p className="truncate text-xs text-zinc-500">
-                      {c.status} · {c.country_code} · {(c.placements || []).join(', ')}
+                      {c.country_code} · {(c.placements || []).join(', ')}
                     </p>
                     {c.headline ? <p className="truncate text-xs text-zinc-600">{c.headline}</p> : null}
-                    {c.deeplink ? <p className="truncate text-xs text-zinc-400">{c.deeplink}</p> : null}
+                    {c.deeplink ? <p className="truncate font-mono text-xs text-zinc-400">{c.deeplink}</p> : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {canWrite && c.status !== 'active' ? (

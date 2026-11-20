@@ -11,7 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import { ChartTooltip } from './ChartTooltip'
-import { formatNairaCompact, shortDay } from './format'
+import { formatMoneyCompact, shortDay } from './format'
 
 type Series = { key: string; name: string; color: string }
 
@@ -20,9 +20,16 @@ type Props = {
   xKey?: string
   series: Series[]
   valueKind?: 'money' | 'count'
+  currency?: string
 }
 
-export function StackedArea({ data, xKey = 'day', series, valueKind = 'money' }: Props) {
+export function StackedArea({
+  data,
+  xKey = 'day',
+  series,
+  valueKind = 'money',
+  currency = 'NGN',
+}: Props) {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -50,10 +57,10 @@ export function StackedArea({ data, xKey = 'day', series, valueKind = 'money' }:
           axisLine={false}
           width={52}
           tickFormatter={(v) =>
-            valueKind === 'money' ? formatNairaCompact(Number(v)) : String(v)
+            valueKind === 'money' ? formatMoneyCompact(Number(v), currency) : String(v)
           }
         />
-        <Tooltip content={<ChartTooltip valueKind={valueKind} />} />
+        <Tooltip content={<ChartTooltip valueKind={valueKind} currency={currency} />} />
         <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
         {series.map((s) => (
           <Area

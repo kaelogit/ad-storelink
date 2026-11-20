@@ -270,7 +270,7 @@ export default function PaymentIncidentsPage() {
           value={
             summary?.lastWebhookErrorAt
               ? new Date(summary.lastWebhookErrorAt).toLocaleString()
-              : '—'
+              : '-'
           }
           hint="From observability_events"
           isText
@@ -401,14 +401,14 @@ export default function PaymentIncidentsPage() {
               {failures.map((row) => (
                 <DataTableRow key={row.id}>
                   <DataTableCell className="text-xs whitespace-nowrap">
-                    {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                    {row.created_at ? new Date(row.created_at).toLocaleString() : '-'}
                   </DataTableCell>
                   <DataTableCell>
-                    <p className="text-xs font-medium text-gray-900">{row.message || '—'}</p>
+                    <p className="text-xs font-medium text-gray-900">{row.message || '-'}</p>
                     {row.hint ? <p className="text-[10px] text-gray-500 mt-0.5">{row.hint}</p> : null}
                   </DataTableCell>
-                  <DataTableCell className="font-mono text-[10px] break-all">{row.reference || '—'}</DataTableCell>
-                  <DataTableCell className="font-mono text-[10px] break-all">{row.order_id || '—'}</DataTableCell>
+                  <DataTableCell className="font-mono text-[10px] break-all">{row.reference || '-'}</DataTableCell>
+                  <DataTableCell className="font-mono text-[10px] break-all">{row.order_id || '-'}</DataTableCell>
                   <DataTableCell>
                     {row.order_id && canReconcile ? (
                       <MarkOrderPaidInline
@@ -445,8 +445,8 @@ export default function PaymentIncidentsPage() {
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
             <p className="text-[11px] text-amber-950 leading-relaxed">
-              <span className="font-bold">Most “stuck” rows with no Paystack ref are abandoned checkouts</span>
-              — buyer opened Paystack and never paid. Do <span className="font-bold">not</span> Mark paid
+              <span className="font-bold">Most “stuck” rows with no Paystack ref are abandoned checkouts.</span>
+              {' '}Buyer opened Paystack and never paid. Do <span className="font-bold">not</span> Mark paid
               unless Paystack Dashboard shows a successful charge for that order. Real webhook failures land
               in the Webhook failures tab with a reference.
             </p>
@@ -477,7 +477,7 @@ export default function PaymentIncidentsPage() {
                     </DataTableCell>
                     <DataTableCell className="text-xs">{order.age_minutes ?? 0} min</DataTableCell>
                     <DataTableCell className="text-[10px] text-gray-600">
-                      {order.origin_channel || '—'}
+                      {order.origin_channel || '-'}
                       {order.checkout_mode ? ` · ${order.checkout_mode}` : ''}
                     </DataTableCell>
                     <DataTableCell>

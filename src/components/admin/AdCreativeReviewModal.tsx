@@ -94,7 +94,7 @@ export function AdCreativeReviewModal({
                 <p className="truncate font-mono text-xs text-zinc-500">{row.deeplink}</p>
               ) : null}
               <p className="text-xs text-zinc-500">
-                Placements: {(row.placements || []).join(', ') || '—'}
+                Placements: {(row.placements || []).join(', ') || '-'}
               </p>
             </div>
           </div>

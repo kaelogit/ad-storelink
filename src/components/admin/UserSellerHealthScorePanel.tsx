@@ -65,7 +65,7 @@ type UserSellerHealthScorePanelProps = {
 }
 
 function formatMinutes(minutes: number | null | undefined) {
-  if (minutes == null || Number.isNaN(Number(minutes))) return '—'
+  if (minutes == null || Number.isNaN(Number(minutes))) return '-'
   const m = Number(minutes)
   if (m < 60) return `${Math.round(m)} min`
   if (m < 1440) return `${(m / 60).toFixed(1)} hr`
@@ -107,7 +107,7 @@ export function UserSellerHealthScorePanel({ payload }: UserSellerHealthScorePan
             aria-label={`Health score ${payload.healthScore ?? 0}`}
           >
             <div className="h-full w-full rounded-full bg-white flex flex-col items-center justify-center">
-              <span className="text-sm font-black text-gray-900">{payload.healthScore ?? '—'}</span>
+              <span className="text-sm font-black text-gray-900">{payload.healthScore ?? '-'}</span>
               <span className="text-[8px] font-bold uppercase text-gray-400">/100</span>
             </div>
           </div>
@@ -183,7 +183,7 @@ export function UserSellerHealthScorePanel({ payload }: UserSellerHealthScorePan
             <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-1.5 text-[10px]">
               <p className="font-bold text-gray-800">Penalties applied</p>
               <p className="text-gray-600">
-                Reputation base {metrics.reputationScore ?? '—'} − chargeback ({penalties.chargeback ?? 0}) − strikes (
+                Reputation base {metrics.reputationScore ?? '-'} − chargeback ({penalties.chargeback ?? 0}) − strikes (
                 {penalties.contentStrikes ?? 0}) − response ({penalties.responseTime ?? 0})
               </p>
             </div>
@@ -209,7 +209,7 @@ export function UserSellerHealthScorePanel({ payload }: UserSellerHealthScorePan
                     <span className="font-bold text-gray-800">{ev.event_type}</span>
                     <span className="text-gray-400"> · +{ev.points} pts · </span>
                     <span className="text-gray-500">
-                      {ev.created_at ? new Date(ev.created_at).toLocaleString() : '—'}
+                      {ev.created_at ? new Date(ev.created_at).toLocaleString() : '-'}
                     </span>
                   </div>
                 ))}

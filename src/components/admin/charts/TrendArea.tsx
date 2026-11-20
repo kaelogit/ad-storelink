@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { ChartTooltip } from './ChartTooltip'
-import { ACCENT, formatCount, formatNairaCompact, shortDay, type ChartAccent } from './format'
+import { ACCENT, formatCount, formatMoneyCompact, shortDay, type ChartAccent } from './format'
 
 type Props = {
   data: Array<Record<string, number | string>>
@@ -19,6 +19,7 @@ type Props = {
   name?: string
   accent?: ChartAccent
   valueKind?: 'money' | 'count'
+  currency?: string
   gradientId?: string
 }
 
@@ -29,6 +30,7 @@ export function TrendArea({
   name,
   accent = 'sky',
   valueKind = 'count',
+  currency = 'NGN',
   gradientId,
 }: Props) {
   const a = ACCENT[accent]
@@ -57,9 +59,11 @@ export function TrendArea({
           tickLine={false}
           axisLine={false}
           width={48}
-          tickFormatter={(v) => (valueKind === 'money' ? formatNairaCompact(Number(v)) : formatCount(Number(v)))}
+          tickFormatter={(v) =>
+            valueKind === 'money' ? formatMoneyCompact(Number(v), currency) : formatCount(Number(v))
+          }
         />
-        <Tooltip content={<ChartTooltip valueKind={valueKind} />} />
+        <Tooltip content={<ChartTooltip valueKind={valueKind} currency={currency} />} />
         <Area
           type="monotone"
           dataKey={yKey}

@@ -148,7 +148,7 @@ export function UserSocialEngagementPanel({ userId }: UserSocialEngagementPanelP
 
       <div className="p-4 space-y-3">
         <p className="text-[11px] text-gray-600 leading-relaxed">
-          Read-only paginated samples for fraud or harassment investigations. Each page load is audit-logged — no bulk export.
+          Read-only paginated samples for fraud or harassment investigations. Each page load is audit-logged. No bulk export.
         </p>
 
         <div className="flex flex-wrap gap-2">

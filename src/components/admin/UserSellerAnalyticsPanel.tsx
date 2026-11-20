@@ -195,7 +195,7 @@ export function UserSellerAnalyticsPanel({ snapshot }: UserSellerAnalyticsPanelP
                   <div key={o.id} className="flex justify-between gap-2 text-[10px] border-b border-gray-50 pb-1.5 last:border-0">
                     <div className="min-w-0">
                       <p className="font-mono font-bold text-gray-800">#{o.id.slice(0, 8).toUpperCase()}</p>
-                      <p className="text-gray-400">{o.status} · payout {o.payout_status || '—'}</p>
+                      <p className="text-gray-400">{o.status} · payout {o.payout_status || '-'}</p>
                     </div>
                     <p className="font-bold text-gray-900 shrink-0">
                       {formatMoney(Number(o.total_amount ?? 0), o.currency_code || currency)}

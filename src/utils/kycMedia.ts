@@ -7,7 +7,7 @@ export type KycMediaResolveResult = {
 
 /**
  * Resolve a KYC media ref for admin preview (Gap 8).
- * Always goes through get-kyc-download-url — never opens private keys as site paths
+ * Always goes through get-kyc-download-url - never opens private keys as site paths
  * and never opens legacy public HTTPS URLs directly.
  */
 export async function resolveAdminKycMediaUrl(

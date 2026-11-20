@@ -9,8 +9,12 @@ import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import { StatusBadge } from '../../../components/admin/StatusBadge'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
+import { useAdminRole } from '../../../hooks/useAdminRole'
+
+const STORE_APP_BASE = (process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng').replace(/\/$/, '')
 
 type SpotlightReportRow = {
   report_id: string
@@ -49,37 +53,51 @@ const REASON_CATEGORIES = [
 const TABS = ['open', 'reviewing', 'resolved', 'dismissed', 'all'] as const
 
 export default function SpotlightModerationPage() {
+  const { role } = useAdminRole()
+  const canModerate = role === 'super_admin' || role === 'moderator' || role === 'support'
   const [rows, setRows] = useState<SpotlightReportRow[]>([])
   const [counts, setCounts] = useState<StatusCounts | null>(null)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [statusTab, setStatusTab] = useState<(typeof TABS)[number]>('all')
+  const [statusTab, setStatusTab] = useState<(typeof TABS)[number]>('open')
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
-  const [activeAction, setActiveAction] = useState<{ row: SpotlightReportRow; action: 'hide' | 'remove' | 'reinstate' } | null>(null)
+  const [activeAction, setActiveAction] = useState<{
+    row: SpotlightReportRow
+    action: 'hide' | 'remove' | 'reinstate' | 'dismiss'
+  } | null>(null)
 
   const loadReports = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      status: statusTab,
-      limit: '120',
-      offset: '0',
-    })
-    const response = await fetch(`/api/admin/spotlight/reports/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load Spotlight reports.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({
+        status: statusTab,
+        limit: '120',
+        offset: '0',
+      })
+      const response = await fetch(`/api/admin/spotlight/reports/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load Spotlight reports.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        setCounts(null)
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        rows?: SpotlightReportRow[]
+        counts?: StatusCounts
+      }
+      setCounts(payload.counts ?? null)
+      setRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load Spotlight reports.',
+      })
       setRows([])
       setCounts(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as {
-      rows?: SpotlightReportRow[]
-      counts?: StatusCounts
-    }
-    setCounts(payload.counts ?? null)
-    setRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [statusTab])
 
   useEffect(() => {
@@ -197,7 +215,7 @@ export default function SpotlightModerationPage() {
             title="No Spotlight reports"
             message={
               counts && counts.total > 0
-                ? `Nothing in “${statusTab}”. Switch tabs — ${counts.total} report(s) exist in total.`
+                ? `Nothing in “${statusTab}”. Switch tabs. ${counts.total} report(s) exist in total.`
                 : 'No Spotlight reports have been filed yet.'
             }
             icon={ShieldAlert}
@@ -241,7 +259,7 @@ export default function SpotlightModerationPage() {
                         <span className="text-gray-700">Creator @{row.creator_slug || 'user'}</span>
                         {row.spotlight_post_id ? (
                           <a
-                            href={`https://storelink.ng/sp/${row.spotlight_post_id}`}
+                            href={`${STORE_APP_BASE}/sp/${row.spotlight_post_id}`}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 text-blue-600 hover:underline"
@@ -253,9 +271,30 @@ export default function SpotlightModerationPage() {
                     </div>
                   </DataTableCell>
                   <DataTableCell>
-                    <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-bold uppercase text-gray-700">
-                      {row.report_status} / {row.post_moderation_state}
-                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      <StatusBadge
+                        label={row.report_status}
+                        tone={
+                          row.report_status === 'open'
+                            ? 'danger'
+                            : row.report_status === 'reviewing'
+                              ? 'warning'
+                              : row.report_status === 'resolved'
+                                ? 'success'
+                                : 'neutral'
+                        }
+                      />
+                      <StatusBadge
+                        label={row.post_moderation_state}
+                        tone={
+                          row.post_moderation_state === 'active'
+                            ? 'success'
+                            : row.post_moderation_state === 'hidden'
+                              ? 'warning'
+                              : 'danger'
+                        }
+                      />
+                    </div>
                   </DataTableCell>
                   <DataTableCell>
                     {row.seller_id ? (
@@ -265,34 +304,56 @@ export default function SpotlightModerationPage() {
                       >
                         @{row.seller_slug || 'store'}
                       </Link>
+                    ) : row.creator_id ? (
+                      <Link
+                        href={`/dashboard/users?q=${encodeURIComponent(row.creator_id)}`}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        @{row.creator_slug || 'user'}
+                      </Link>
                     ) : (
                       <span className="text-xs text-gray-700">@{row.seller_slug || 'store'}</span>
                     )}
                   </DataTableCell>
                   <DataTableCell>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveAction({ row, action: 'hide' })}
-                        className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
-                      >
-                        Hide
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveAction({ row, action: 'remove' })}
-                        className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
-                      >
-                        Remove
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveAction({ row, action: 'reinstate' })}
-                        className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
-                      >
-                        Reinstate
-                      </button>
-                    </div>
+                    {canModerate ? (
+                      <div className="flex flex-wrap gap-2">
+                        {(row.report_status === 'open' || row.report_status === 'reviewing') ? (
+                          <button
+                            type="button"
+                            onClick={() => setActiveAction({ row, action: 'dismiss' })}
+                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50"
+                          >
+                            Dismiss
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setActiveAction({ row, action: 'hide' })}
+                          className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
+                        >
+                          Hide
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveAction({ row, action: 'remove' })}
+                          className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
+                        >
+                          Remove
+                        </button>
+                        {row.post_moderation_state !== 'active' ? (
+                          <button
+                            type="button"
+                            onClick={() => setActiveAction({ row, action: 'reinstate' })}
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
+                          >
+                            Reinstate
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">Read-only</span>
+                    )}
                   </DataTableCell>
                 </DataTableRow>
               ))}
@@ -304,13 +365,19 @@ export default function SpotlightModerationPage() {
       <ActionReasonModal
         open={!!activeAction}
         title={
-          activeAction?.action === 'hide'
-            ? 'Hide Spotlight post?'
-            : activeAction?.action === 'remove'
-              ? 'Remove Spotlight post?'
-              : 'Reinstate Spotlight post?'
+          activeAction?.action === 'dismiss'
+            ? 'Dismiss Spotlight report?'
+            : activeAction?.action === 'hide'
+              ? 'Hide Spotlight post?'
+              : activeAction?.action === 'remove'
+                ? 'Remove Spotlight post?'
+                : 'Reinstate Spotlight post?'
         }
-        description="This action updates Spotlight moderation state and closes the linked report."
+        description={
+          activeAction?.action === 'dismiss'
+            ? 'Closes the report as a false positive. The post stays visible.'
+            : 'This action updates Spotlight moderation state and closes the linked report.'
+        }
         impactSummary="Action is logged to admin audit trail."
         categoryOptions={REASON_CATEGORIES}
         submitting={submitting}

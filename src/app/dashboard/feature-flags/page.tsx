@@ -7,6 +7,7 @@ import { PageHeader } from '../../../components/admin/PageHeader'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { EmptyState } from '../../../components/admin/EmptyState'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
 import type { AdminRole } from '../../../types/admin'
@@ -79,18 +80,26 @@ export default function FeatureFlagsPage() {
 
   const loadFlags = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({ category, q: query.trim() })
-    const response = await fetch(`/api/admin/feature-flags/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load feature flags.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({ category, q: query.trim() })
+      const response = await fetch(`/api/admin/feature-flags/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load feature flags.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        return
+      }
+      const json = (await response.json()) as { flags?: FlagRow[] }
+      setRows(json.flags ?? [])
+    } catch (err) {
+      setFeedback({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load feature flags.',
+      })
       setRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const json = (await response.json()) as { flags?: FlagRow[] }
-    setRows(json.flags ?? [])
-    setLoading(false)
   }, [category, query])
 
   useEffect(() => {
@@ -150,8 +159,8 @@ export default function FeatureFlagsPage() {
         <p className="font-bold uppercase tracking-wider text-[10px] text-blue-600">Staging-safe workflow</p>
         <ol className="list-decimal list-inside space-y-1 text-blue-800">
           <li>Validate changes on <strong>staging</strong> first (same flag keys).</li>
-          <li>Start with low rollout (1–5%) for user-facing flags; watch Observability + session metrics.</li>
-          <li>Document reason in the confirm modal — appears in Audit Log as last changed by.</li>
+          <li>Start with low rollout (1-5%) for user-facing flags; watch Observability + session metrics.</li>
+          <li>Document reason in the confirm modal. It appears in Audit Log as last changed by.</li>
           <li>For ranking v2 kill switch / experiment freeze, use <Link href="/dashboard/experiments" className="font-bold underline">Experiments</Link>.</li>
           <li>Production rollback: set <code className="font-mono">enabled=false</code> or rollout <code className="font-mono">0%</code>.</li>
         </ol>
@@ -238,6 +247,12 @@ export default function FeatureFlagsPage() {
         <div className="flex justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
         </div>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Flag}
+          title="No feature flags"
+          message={query.trim() || category !== 'all' ? 'No flags match your filters.' : 'No feature flags are configured yet.'}
+        />
       ) : (
         <DataTable>
           <DataTableHeader>
@@ -253,7 +268,7 @@ export default function FeatureFlagsPage() {
                 <DataTableRow key={row.key}>
                   <DataTableCell className="align-top max-w-md">
                     <p className="font-mono text-xs font-bold text-gray-900">{row.key}</p>
-                    <p className="text-[10px] text-gray-500 mt-1">{row.description || '—'}</p>
+                    <p className="text-[10px] text-gray-500 mt-1">{row.description || '-'}</p>
                     <button
                       type="button"
                       onClick={() => setExpandedKey(expandedKey === row.key ? null : row.key)}
@@ -274,14 +289,14 @@ export default function FeatureFlagsPage() {
                     />
                     <p className="text-[10px] text-gray-400 mt-1 capitalize">{row.category}</p>
                     <p className="text-[10px] text-gray-400">
-                      DB {row.updated_at ? new Date(row.updated_at).toLocaleString() : '—'}
+                      DB {row.updated_at ? new Date(row.updated_at).toLocaleString() : '-'}
                     </p>
                   </DataTableCell>
                   <DataTableCell className="align-top text-[10px] text-gray-600">
                     {row.last_change?.admin_email ? (
                       <>
                         <p className="font-semibold text-gray-800">{row.last_change.admin_email}</p>
-                        <p>{row.last_change.created_at ? new Date(row.last_change.created_at).toLocaleString() : '—'}</p>
+                        <p>{row.last_change.created_at ? new Date(row.last_change.created_at).toLocaleString() : '-'}</p>
                         <p className="text-gray-400">{row.last_change.action_type}</p>
                       </>
                     ) : (

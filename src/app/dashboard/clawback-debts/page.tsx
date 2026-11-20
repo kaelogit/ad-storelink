@@ -12,6 +12,7 @@ import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader
 import { parseApiError } from '../../../utils/http'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
 import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
+import { useAdminRole } from '../../../hooks/useAdminRole'
 
 type DebtRow = {
   id: string
@@ -78,6 +79,9 @@ function fromSmallestUnit(amountMinor: number, currencyCode: string): number {
 
 export default function ClawbackDebtsPage() {
   const { countryCode } = useCountryFilter()
+  const { role } = useAdminRole()
+  /** Matches waive / mark-paid APIs: super_admin | finance */
+  const canSettleDebt = role === 'super_admin' || role === 'finance'
   const [rows, setRows] = useState<DebtRow[]>([])
   const [stats, setStats] = useState<DebtStats | null>(null)
   const [loading, setLoading] = useState(false)
@@ -365,7 +369,7 @@ export default function ClawbackDebtsPage() {
                       >
                         Add note
                       </button>
-                      {row.status === 'open' && (
+                      {row.status === 'open' && canSettleDebt ? (
                         <>
                           <button
                             type="button"
@@ -382,7 +386,7 @@ export default function ClawbackDebtsPage() {
                             Waive debt
                           </button>
                         </>
-                      )}
+                      ) : null}
                     </div>
                   </DataTableCell>
                 </DataTableRow>

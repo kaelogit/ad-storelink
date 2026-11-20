@@ -12,7 +12,12 @@ import { StatusBadge } from '../../../components/admin/StatusBadge'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
 import { useCountryFilter } from '../../../contexts/CountryFilterContext'
-import { ALL_COUNTRIES_CODE } from '../../../constants/SupportedCountries'
+import { ALL_COUNTRIES_CODE, currencyForCountryCode } from '../../../constants/SupportedCountries'
+import { useAdminRole } from '../../../hooks/useAdminRole'
+import { allowedRolesForPath } from '../../../constants/adminNavigation'
+import { formatMoney } from '../../../components/admin/charts/format'
+import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
+import type { AdminRole } from '../../../types/admin'
 
 type ReferralRow = {
   invitee_id: string
@@ -68,14 +73,40 @@ const FLAG_LABELS: Record<string, { label: string; tone: 'warning' | 'danger' | 
   no_order_conversion: { label: 'No conversion', tone: 'neutral' },
 }
 
+const APPROVE_CATEGORIES = [
+  { value: 'verified_legit', label: 'Verified legitimate invite' },
+  { value: 'false_positive', label: 'Fraud flag was a false positive' },
+  { value: 'other', label: 'Other' },
+]
+
+const REJECT_CATEGORIES = [
+  { value: 'fraud_suspected', label: 'Fraud suspected' },
+  { value: 'self_referral', label: 'Self / circular referral' },
+  { value: 'duplicate_identity', label: 'Duplicate device / phone' },
+  { value: 'other', label: 'Other' },
+]
+
+type PendingReview = { inviteeId: string; inviteeLabel: string; decision: 'approved' | 'rejected' }
+
 export default function ReferralsPage() {
   const { countryCode } = useCountryFilter()
+  const { role } = useAdminRole()
+  const canReview = role === 'super_admin' || role === 'finance' || role === 'support'
+  const canOpenPath = (href: string) => {
+    const allowed = allowedRolesForPath(href)
+    if (!allowed || !role) return false
+    return allowed.includes(role as AdminRole)
+  }
+  const canOpenUsers = canOpenPath('/dashboard/users')
+  const isGlobalView = countryCode === ALL_COUNTRIES_CODE
+  const deskCurrency = currencyForCountryCode(isGlobalView ? 'NG' : countryCode)
   const searchParams = useSearchParams()
   const inviterFromUrl = searchParams.get('inviterId')?.trim() || ''
 
   const [rows, setRows] = useState<ReferralRow[]>([])
   const [stats, setStats] = useState<ReferralStats | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [pendingReview, setPendingReview] = useState<PendingReview | null>(null)
   const [query, setQuery] = useState('')
   const [suspiciousOnly, setSuspiciousOnly] = useState(false)
   const [inviterFilter, setInviterFilter] = useState('')
@@ -88,41 +119,51 @@ export default function ReferralsPage() {
 
   const loadReferrals = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      q: query.trim(),
-      country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
-      limit: '150',
-      offset: '0',
-    })
-    if (suspiciousOnly) params.set('suspicious', '1')
-    if (inviterFilter.trim()) params.set('inviterId', inviterFilter.trim())
+    try {
+      const params = new URLSearchParams({
+        q: query.trim(),
+        country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
+        limit: '150',
+        offset: '0',
+      })
+      if (suspiciousOnly) params.set('suspicious', '1')
+      if (inviterFilter.trim()) params.set('inviterId', inviterFilter.trim())
 
-    const response = await fetch(`/api/admin/referrals/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load referrals.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch(`/api/admin/referrals/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load referrals.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        setStats(null)
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: ReferralRow[]; stats?: ReferralStats }
+      setRows(Array.isArray(payload.rows) ? payload.rows : [])
+      setStats(payload.stats ?? null)
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load referrals.' })
       setRows([])
       setStats(null)
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json().catch(() => ({}))) as { rows?: ReferralRow[]; stats?: ReferralStats }
-    setRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setStats(payload.stats ?? null)
-    setLoading(false)
   }, [countryCode, inviterFilter, query, suspiciousOnly])
 
   useEffect(() => {
     loadReferrals()
   }, [loadReferrals])
 
-  const reviewReferral = useCallback(async (inviteeId: string, decision: 'approved' | 'rejected') => {
+  const reviewReferral = useCallback(async (inviteeId: string, decision: 'approved' | 'rejected', notes: string) => {
+    if (!canReview) {
+      setFeedback({ tone: 'error', message: 'Your role cannot review referrals.' })
+      return
+    }
     setReviewingId(inviteeId)
     try {
       const response = await fetch('/api/admin/referrals/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inviteeId, decision }),
+        body: JSON.stringify({ inviteeId, decision, notes }),
       })
       if (!response.ok) {
         const msg = await parseApiError(response, 'Review failed.')
@@ -136,13 +177,16 @@ export default function ReferralsPage() {
         message:
           decision === 'approved'
             ? `Referral approved${granted ? ` · ${granted} signup coins released` : ''}.`
-            : 'Referral rejected — signup reward will not pay.',
+            : 'Referral rejected. Signup reward will not pay.',
       })
       await loadReferrals()
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Review failed.' })
     } finally {
       setReviewingId(null)
+      setPendingReview(null)
     }
-  }, [loadReferrals])
+  }, [canReview, loadReferrals])
 
   const flaggedCount = useMemo(
     () => rows.filter((r) => (r.fraud_flags?.length ?? 0) > 0).length,
@@ -156,6 +200,17 @@ export default function ReferralsPage() {
 
   const config = stats?.rewardConfig
 
+  // Amounts are major units (e.g. 5000 NGN), not minor.
+  const minGmvEntries = useMemo<Array<[string, number]>>(() => {
+    const map = config?.min_order_gmv_by_currency
+    if (!map) return []
+    const entries = Object.entries(map)
+      .filter(([, amount]) => amount != null && Number.isFinite(Number(amount)))
+      .map(([code, amount]) => [code.toUpperCase(), Number(amount)] as [string, number])
+    if (isGlobalView) return entries.sort((a, b) => a[0].localeCompare(b[0]))
+    return entries.filter(([code]) => code === deskCurrency.toUpperCase())
+  }, [config?.min_order_gmv_by_currency, isGlobalView, deskCurrency])
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -168,7 +223,7 @@ export default function ReferralsPage() {
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Total attributed</p>
-          <p className="mt-1 text-2xl font-black text-gray-900">{stats?.totalAttributed?.toLocaleString() ?? '—'}</p>
+          <p className="mt-1 text-2xl font-black text-gray-900">{stats?.totalAttributed?.toLocaleString() ?? '-'}</p>
           <p className="text-[10px] text-gray-400 mt-1">{stats?.attributedLast30d ?? 0} in last 30d</p>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -185,7 +240,7 @@ export default function ReferralsPage() {
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Suspicious rows</p>
-          <p className="mt-1 text-2xl font-black text-amber-800">{stats?.suspiciousCount?.toLocaleString() ?? '—'}</p>
+          <p className="mt-1 text-2xl font-black text-amber-800">{stats?.suspiciousCount?.toLocaleString() ?? '-'}</p>
           <p className="text-[10px] text-amber-600 mt-1">{flaggedCount} flagged in current view</p>
         </div>
       </div>
@@ -240,12 +295,12 @@ export default function ReferralsPage() {
               <div className="flex justify-between"><span className="text-gray-600">First order</span><span className="font-bold">{config.first_order_coins?.toLocaleString()} coins</span></div>
               <div className="flex justify-between"><span className="text-gray-600">Repeat order</span><span className="font-bold">{config.repeat_order_coins?.toLocaleString()} coins</span></div>
               <div className="flex justify-between"><span className="text-gray-600">Repeat window</span><span className="font-bold">{config.repeat_window_months} months</span></div>
-              {config.min_order_gmv_by_currency?.NGN != null ? (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Min order GMV (NGN)</span>
-                  <span className="font-bold">₦{Number(config.min_order_gmv_by_currency.NGN).toLocaleString()}</span>
+              {minGmvEntries.map(([code, amount]) => (
+                <div key={code} className="flex justify-between">
+                  <span className="text-gray-600">Min order GMV ({code})</span>
+                  <span className="font-bold">{formatMoney(amount, code)}</span>
                 </div>
-              ) : null}
+              ))}
               <p className="text-[10px] text-gray-500 pt-2 border-t border-emerald-100 leading-relaxed">
                 Source: <span className="font-mono">{config.source}</span>. {config.notes}
               </p>
@@ -301,16 +356,28 @@ export default function ReferralsPage() {
               return (
                 <DataTableRow key={`${row.invitee_id}-${row.inviter_id}`}>
                   <DataTableCell className="align-top">
-                    <Link href={`/dashboard/users?q=${row.invitee_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                      {row.invitee_name || row.invitee_email || row.invitee_id.slice(0, 8)}
-                    </Link>
+                    {canOpenUsers ? (
+                      <Link href={`/dashboard/users?q=${row.invitee_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                        {row.invitee_name || row.invitee_email || row.invitee_id.slice(0, 8)}
+                      </Link>
+                    ) : (
+                      <span className="text-sm font-semibold text-gray-900">
+                        {row.invitee_name || row.invitee_email || row.invitee_id.slice(0, 8)}
+                      </span>
+                    )}
                     <p className="text-[11px] text-gray-500">{row.invitee_email}</p>
                     <p className="text-[10px] text-gray-400">{row.invitee_country}</p>
                   </DataTableCell>
                   <DataTableCell className="align-top">
-                    <Link href={`/dashboard/users?q=${row.inviter_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                      {row.inviter_name || row.inviter_email || row.inviter_id.slice(0, 8)}
-                    </Link>
+                    {canOpenUsers ? (
+                      <Link href={`/dashboard/users?q=${row.inviter_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                        {row.inviter_name || row.inviter_email || row.inviter_id.slice(0, 8)}
+                      </Link>
+                    ) : (
+                      <span className="text-sm font-semibold text-gray-900">
+                        {row.inviter_name || row.inviter_email || row.inviter_id.slice(0, 8)}
+                      </span>
+                    )}
                     <p className="text-[11px] text-gray-500 font-mono">{row.inviter_referral_code}</p>
                     <button
                       type="button"
@@ -345,7 +412,7 @@ export default function ReferralsPage() {
                         })}
                       </div>
                     ) : (
-                      <span className="text-[10px] text-gray-400">—</span>
+                      <span className="text-[10px] text-gray-400">-</span>
                     )}
                     {hasFlags ? <AlertTriangle className="h-4 w-4 text-amber-500 mt-1" /> : null}
                   </DataTableCell>
@@ -354,12 +421,20 @@ export default function ReferralsPage() {
                       label={row.review_status === 'pending_review' ? 'Pending' : row.review_status === 'rejected' ? 'Rejected' : 'Approved'}
                       tone={row.review_status === 'pending_review' ? 'warning' : row.review_status === 'rejected' ? 'danger' : 'success'}
                     />
-                    {row.review_status === 'pending_review' ? (
+                    {row.review_status === 'pending_review' && !canReview ? (
+                      <p className="mt-2 text-[10px] font-semibold text-gray-400">Read-only</p>
+                    ) : row.review_status === 'pending_review' ? (
                       <div className="mt-2 flex flex-wrap gap-2">
                         <button
                           type="button"
                           disabled={reviewingId === row.invitee_id}
-                          onClick={() => reviewReferral(row.invitee_id, 'approved')}
+                          onClick={() =>
+                            setPendingReview({
+                              inviteeId: row.invitee_id,
+                              inviteeLabel: row.invitee_name || row.invitee_email || row.invitee_id.slice(0, 8),
+                              decision: 'approved',
+                            })
+                          }
                           className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
                         >
                           Approve
@@ -367,7 +442,13 @@ export default function ReferralsPage() {
                         <button
                           type="button"
                           disabled={reviewingId === row.invitee_id}
-                          onClick={() => reviewReferral(row.invitee_id, 'rejected')}
+                          onClick={() =>
+                            setPendingReview({
+                              inviteeId: row.invitee_id,
+                              inviteeLabel: row.invitee_name || row.invitee_email || row.invitee_id.slice(0, 8),
+                              decision: 'rejected',
+                            })
+                          }
                           className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
                         >
                           Reject
@@ -385,6 +466,26 @@ export default function ReferralsPage() {
           </DataTableBody>
         </DataTable>
       )}
+
+      <ActionReasonModal
+        open={!!pendingReview}
+        title={pendingReview?.decision === 'approved' ? 'Approve referral' : 'Reject referral'}
+        description={`Invitee: ${pendingReview?.inviteeLabel ?? ''}`}
+        impactSummary={
+          pendingReview?.decision === 'approved'
+            ? 'Signup coins will be released to the inviter if eligible.'
+            : 'Signup reward will not pay for this referral.'
+        }
+        categoryOptions={pendingReview?.decision === 'approved' ? APPROVE_CATEGORIES : REJECT_CATEGORIES}
+        submitting={!!pendingReview && reviewingId === pendingReview.inviteeId}
+        onClose={() => {
+          if (!reviewingId) setPendingReview(null)
+        }}
+        onSubmit={async ({ category, reason }) => {
+          if (!pendingReview) return
+          await reviewReferral(pendingReview.inviteeId, pendingReview.decision, `[${category}] ${reason}`)
+        }}
+      />
     </div>
   )
 }

@@ -31,6 +31,7 @@ import {
 } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
 import { createClient } from '../../../utils/supabase/client'
+import { allowedRolesForPath } from '../../../constants/adminNavigation'
 import type { AdminRole } from '../../../types/admin'
 import type { CurationHubRow } from '../../api/admin/curations/list/route'
 
@@ -72,7 +73,7 @@ const REASON_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ]
 
-const PUBLIC_ORIGIN = 'https://storelink.ng'
+const PUBLIC_ORIGIN = (process.env.NEXT_PUBLIC_STORELINK_APP_URL || 'https://storelink.ng').replace(/\/$/, '')
 
 export default function CurationsPage() {
   const supabase = createClient()
@@ -81,7 +82,7 @@ export default function CurationsPage() {
 
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
   const [rows, setRows] = useState<CurationHubRow[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [query, setQuery] = useState('')
   const [kindFilter, setKindFilter] = useState<'all' | 'product' | 'service'>('all')
@@ -95,6 +96,10 @@ export default function CurationsPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
 
   const canModerate = adminRole === 'super_admin' || adminRole === 'moderator' || adminRole === 'content'
+  const canOpenUsers = (() => {
+    const allowed = allowedRolesForPath('/dashboard/users')
+    return !!allowed && !!adminRole && allowed.includes(adminRole)
+  })()
 
   useEffect(() => {
     if (curatorFromUrl) setCuratorFilter(curatorFromUrl)
@@ -114,27 +119,32 @@ export default function CurationsPage() {
 
   const loadHubs = useCallback(async () => {
     setLoading(true)
-    const params = new URLSearchParams({
-      q: query.trim(),
-      limit: '150',
-      offset: '0',
-    })
-    if (kindFilter !== 'all') params.set('kind', kindFilter)
-    if (hiddenOnly) params.set('hidden', '1')
-    if (featuredOnly) params.set('featured', '1')
-    if (curatorFilter.trim()) params.set('curatorId', curatorFilter.trim())
+    try {
+      const params = new URLSearchParams({
+        q: query.trim(),
+        limit: '150',
+        offset: '0',
+      })
+      if (kindFilter !== 'all') params.set('kind', kindFilter)
+      if (hiddenOnly) params.set('hidden', '1')
+      if (featuredOnly) params.set('featured', '1')
+      if (curatorFilter.trim()) params.set('curatorId', curatorFilter.trim())
 
-    const response = await fetch(`/api/admin/curations/list?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load curation hubs.')
-      setFeedback({ tone: 'error', message: msg })
+      const response = await fetch(`/api/admin/curations/list?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load curation hubs.')
+        setFeedback({ tone: 'error', message: msg })
+        setRows([])
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { rows?: CurationHubRow[] }
+      setRows(Array.isArray(payload.rows) ? payload.rows : [])
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load curation hubs.' })
       setRows([])
+    } finally {
       setLoading(false)
-      return
     }
-    const payload = (await response.json()) as { rows?: CurationHubRow[] }
-    setRows(Array.isArray(payload.rows) ? payload.rows : [])
-    setLoading(false)
   }, [query, kindFilter, hiddenOnly, featuredOnly, curatorFilter])
 
   useEffect(() => {
@@ -144,21 +154,25 @@ export default function CurationsPage() {
   const loadDetail = useCallback(async (row: CurationHubRow) => {
     setDetailLoading(true)
     setDetail(null)
-    const params = new URLSearchParams({
-      curatorId: row.curator_user_id,
-      kind: row.hub_kind,
-      refId: row.hub_ref_id,
-    })
-    const response = await fetch(`/api/admin/curations/detail?${params.toString()}`)
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Failed to load hub detail.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const params = new URLSearchParams({
+        curatorId: row.curator_user_id,
+        kind: row.hub_kind,
+        refId: row.hub_ref_id,
+      })
+      const response = await fetch(`/api/admin/curations/detail?${params.toString()}`)
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Failed to load hub detail.')
+        setFeedback({ tone: 'error', message: msg })
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { hub?: HubDetail }
+      setDetail(payload.hub ?? null)
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load hub detail.' })
+    } finally {
       setDetailLoading(false)
-      return
     }
-    const payload = (await response.json()) as { hub?: HubDetail }
-    setDetail(payload.hub ?? null)
-    setDetailLoading(false)
   }, [])
 
   const openHub = (row: CurationHubRow) => {
@@ -178,41 +192,45 @@ export default function CurationsPage() {
   ) => {
     setSubmitting(true)
     setFeedback({ tone: 'info', message: `Applying ${action}...` })
-    const response = await fetch('/api/admin/curations/moderate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-idempotency-key': `curation-${action}-${row.curator_user_id}-${row.hub_kind}-${row.hub_ref_id}`,
-      },
-      body: JSON.stringify({
-        curatorId: row.curator_user_id,
-        hubKind: row.hub_kind,
-        hubRefId: row.hub_ref_id,
-        action,
-        reasonCategory: opts?.category,
-        reason: opts?.reason,
-      }),
-    })
-    if (!response.ok) {
-      const msg = await parseApiError(response, 'Moderation action failed.')
-      setFeedback({ tone: 'error', message: msg })
+    try {
+      const response = await fetch('/api/admin/curations/moderate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `curation-${action}-${row.curator_user_id}-${row.hub_kind}-${row.hub_ref_id}`,
+        },
+        body: JSON.stringify({
+          curatorId: row.curator_user_id,
+          hubKind: row.hub_kind,
+          hubRefId: row.hub_ref_id,
+          action,
+          reasonCategory: opts?.category,
+          reason: opts?.reason,
+        }),
+      })
+      if (!response.ok) {
+        const msg = await parseApiError(response, 'Moderation action failed.')
+        setFeedback({ tone: 'error', message: msg })
+        return
+      }
+      const payload = (await response.json().catch(() => ({}))) as { hub?: HubDetail }
+      setFeedback({ tone: 'success', message: `Curation hub ${action} applied.` })
+      setPendingAction(null)
+      if (payload.hub) setDetail(payload.hub)
+      await loadHubs()
+      if (selected) {
+        const updated = rows.find(
+          (r) =>
+            r.curator_user_id === row.curator_user_id &&
+            r.hub_kind === row.hub_kind &&
+            r.hub_ref_id === row.hub_ref_id,
+        )
+        if (updated) setSelected(updated)
+      }
+    } catch (err) {
+      setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Moderation action failed.' })
+    } finally {
       setSubmitting(false)
-      return
-    }
-    const payload = (await response.json()) as { hub?: HubDetail }
-    setFeedback({ tone: 'success', message: `Curation hub ${action} applied.` })
-    setPendingAction(null)
-    setSubmitting(false)
-    if (payload.hub) setDetail(payload.hub)
-    await loadHubs()
-    if (selected) {
-      const updated = rows.find(
-        (r) =>
-          r.curator_user_id === row.curator_user_id &&
-          r.hub_kind === row.hub_kind &&
-          r.hub_ref_id === row.hub_ref_id,
-      )
-      if (updated) setSelected(updated)
     }
   }
 
@@ -320,13 +338,17 @@ export default function CurationsPage() {
                         </div>
                       </DataTableCell>
                       <DataTableCell>
-                        <Link
-                          href={`/dashboard/users?userId=${row.curator_user_id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-xs font-semibold text-blue-600 hover:underline"
-                        >
-                          @{row.curator_slug || 'user'}
-                        </Link>
+                        {canOpenUsers ? (
+                          <Link
+                            href={`/dashboard/users?q=${encodeURIComponent(row.curator_user_id)}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs font-semibold text-blue-600 hover:underline"
+                          >
+                            @{row.curator_slug || 'user'}
+                          </Link>
+                        ) : (
+                          <span className="text-xs font-semibold text-gray-900">@{row.curator_slug || 'user'}</span>
+                        )}
                         <p className="text-[10px] text-gray-500">{row.curator_email || row.curator_user_id.slice(0, 8)}</p>
                       </DataTableCell>
                       <DataTableCell>
@@ -340,7 +362,7 @@ export default function CurationsPage() {
                       </DataTableCell>
                       <DataTableCell>
                         <p className="text-xs text-gray-600">
-                          {row.completed_at ? new Date(row.completed_at).toLocaleDateString() : '—'}
+                          {row.completed_at ? new Date(row.completed_at).toLocaleDateString() : '-'}
                         </p>
                       </DataTableCell>
                     </DataTableRow>
@@ -377,7 +399,7 @@ export default function CurationsPage() {
               <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs space-y-1">
                 <p><span className="font-semibold text-gray-500">Curator:</span> @{detail.curator_slug || 'user'}</p>
                 <p><span className="font-semibold text-gray-500">Seller:</span> @{detail.seller_slug || 'seller'}</p>
-                <p><span className="font-semibold text-gray-500">Order:</span> <span className="font-mono">{detail.order_id?.slice(0, 8) || '—'}</span></p>
+                <p><span className="font-semibold text-gray-500">Order:</span> <span className="font-mono">{detail.order_id?.slice(0, 8) || '-'}</span></p>
                 <p><span className="font-semibold text-gray-500">Hub ref:</span> <span className="font-mono break-all">{detail.hub_ref_id}</span></p>
               </div>
               <div className="flex flex-wrap gap-2">

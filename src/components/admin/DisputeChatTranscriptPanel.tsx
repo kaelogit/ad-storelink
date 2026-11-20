@@ -88,8 +88,8 @@ export function DisputeChatTranscriptPanel({
         <div className="max-h-[420px] overflow-y-auto rounded-lg border border-amber-200/80 bg-white">
           {messages.map((m) => {
             const att = attachmentSummary(m)
-            const when = m.created_at ? new Date(m.created_at).toLocaleString() : '—'
-            const role = m.sender_role || '—'
+            const when = m.created_at ? new Date(m.created_at).toLocaleString() : '-'
+            const role = m.sender_role || '-'
             const body = (m.text || '').trim()
             return (
               <div

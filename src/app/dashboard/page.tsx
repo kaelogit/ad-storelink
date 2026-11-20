@@ -10,7 +10,6 @@ import {
   ShoppingBag,
   ShieldAlert,
   Activity,
-  Server,
   Database,
   ArrowRight,
   Loader2,
@@ -37,14 +36,19 @@ import {
   StackedArea,
   TrendArea,
 } from '../../components/admin/charts'
-import { ALL_COUNTRIES_CODE } from '../../constants/SupportedCountries'
+import { ALL_COUNTRIES_CODE, currencyForCountryCode } from '../../constants/SupportedCountries'
+import { allowedRolesForPath } from '../../constants/adminNavigation'
+import type { AdminRole } from '../../types/admin'
+import { formatMoney } from '../../components/admin/charts/format'
 
 export default function DashboardOverview() {
   const supabase = createClient()
   const { countryCode, rpcCountryCode, isGlobalView } = useCountryFilter()
+  const moneyCurrency = currencyForCountryCode(isGlobalView ? 'NG' : countryCode)
   const [loading, setLoading] = useState(true)
   const [role, setRole] = useState<string | null>(null)
   const [trendWindow, setTrendWindow] = useState<'24h' | '7d' | '30d'>('7d')
+  const [loadError, setLoadError] = useState<string | null>(null)
   
   const [stats, setStats] = useState<any>({
     total_users: 0, 
@@ -94,6 +98,7 @@ export default function DashboardOverview() {
 
   useEffect(() => {
     async function init() {
+        setLoadError(null)
         // 1. Get User & Role
         const { data: { user } } = await supabase.auth.getUser()
         let resolvedRole: string | null = null
@@ -108,17 +113,26 @@ export default function DashboardOverview() {
         }
 
         // 2. Fetch Stats & Chart (filtered by country; null = all countries)
-        const { data: statsData } = await supabase.rpc('get_admin_dashboard_stats', {
+        const { data: statsData, error: statsError } = await supabase.rpc('get_admin_dashboard_stats', {
           p_country_code: rpcCountryCode,
         })
-        if (statsData) setStats(statsData)
+        if (statsError) {
+          setLoadError(statsError.message || 'Failed to load dashboard stats')
+        } else if (statsData) {
+          setStats(statsData)
+        }
 
         // Revenue chart: only fetch when a specific country is selected (avoids mixed-currency trap)
         if (!isGlobalView) {
-          const { data: graphData } = await supabase.rpc('get_daily_revenue_chart', {
+          const { data: graphData, error: chartError } = await supabase.rpc('get_daily_revenue_chart', {
             p_country_code: rpcCountryCode,
           })
-          if (graphData) setChartData(graphData)
+          if (chartError) {
+            setLoadError((prev) => prev || chartError.message || 'Failed to load revenue chart')
+            setChartData([])
+          } else if (graphData) {
+            setChartData(graphData)
+          }
         } else {
           setChartData([])
         }
@@ -201,23 +215,31 @@ export default function DashboardOverview() {
     init()
   }, [trendWindow, countryCode, rpcCountryCode, isGlobalView])
 
-  const formatNaira = (amount: number) => {
-    return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount)
-  }
-
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>
 
   const isBoss = role === 'super_admin'
   const canSeeMoney = ['super_admin', 'finance'].includes(role || '')
   const canSeeAnalytics = ['super_admin', 'analyst'].includes(role || '')
-  const profitChartData = (chartData.length > 0 ? chartData : []).map((row: any) => ({
-    day: row.date ?? row.day ?? '',
-    revenue: Number(row.revenue ?? 0),
-  }))
+  const canOpenPath = (href: string) => {
+    const allowed = allowedRolesForPath(href)
+    if (!allowed || !role) return false
+    return allowed.includes(role as AdminRole)
+  }
+  // RPC returns newest-first (up to 30d); Overview shows last 7 days ascending.
+  const profitChartData = (chartData.length > 0 ? chartData : [])
+    .map((row: any) => ({
+      day: String(row.date ?? row.day ?? ''),
+      revenue: Number(row.revenue ?? 0),
+    }))
+    .filter((row) => row.day)
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .slice(-7)
   const showMoneyTrends = !isGlobalView && canSeeMoney
   const showWarehouseTrends = !isGlobalView && canSeeAnalytics
   const showOpsHealth = ['super_admin', 'finance', 'moderator', 'support', 'analyst'].includes(role || '')
   const showTrendsSection = showMoneyTrends || showWarehouseTrends || showOpsHealth
+  const canOpenTribunal = canOpenPath('/dashboard/finance')
+  const canOpenKyc = canOpenPath('/dashboard/moderator')
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -238,17 +260,20 @@ export default function DashboardOverview() {
 
         <div className="flex gap-3">
           <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium shadow-sm">
-            <Database className={`h-3 w-3 ${dbLatency && dbLatency < 500 ? 'text-green-500' : 'text-red-500'}`} />
-            <span>DB: {dbLatency}ms</span>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium shadow-sm">
-            <Server className="h-3 w-3 text-green-500" />
-            <span>System: Online</span>
+            <Database className={`h-3 w-3 ${dbLatency != null && dbLatency < 500 ? 'text-green-500' : 'text-amber-500'}`} />
+            <span>DB: {dbLatency != null ? `${dbLatency}ms` : '—'}</span>
           </div>
         </div>
       </div>
 
-      {/* Disaster recovery — Paystack / webhook / payouts (#106) */}
+      {loadError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+          <p className="text-sm font-semibold">Some overview data failed to load</p>
+          <p className="mt-1 text-xs text-red-700">{loadError}</p>
+        </div>
+      ) : null}
+
+      {/* Disaster recovery - Paystack / webhook / payouts (#106) */}
       {['super_admin', 'finance', 'support'].includes(role || '') && (
         <DisasterRecoveryPanel />
       )}
@@ -277,15 +302,17 @@ export default function DashboardOverview() {
                     <div className="rounded-full bg-emerald-50 p-2 text-emerald-600"><Wallet size={16} /></div>
                 </div>
                 <div className="flex flex-col">
-                    <span className="text-xl font-bold text-gray-900">{formatNaira(stats.total_revenue)}</span>
+                    <span className="text-xl font-bold text-gray-900">{formatMoney(stats.total_revenue, moneyCurrency)}</span>
                     <div className="mt-3 space-y-1">
                         <div className="flex items-center justify-between text-[10px]">
                             <span className="text-gray-500">Subscriptions</span>
-                            <span className="font-semibold text-blue-600">{formatNaira(stats.revenue_subscriptions)}</span>
+                            <span className="font-semibold text-gray-400" title="Subscription revenue RPC is not wired yet">
+                              Coming soon
+                            </span>
                         </div>
                         <div className="flex items-center justify-between text-[10px]">
                             <span className="text-gray-500">Commissions</span>
-                            <span className="font-semibold text-orange-600">{formatNaira(stats.revenue_transactions)}</span>
+                            <span className="font-semibold text-orange-600">{formatMoney(stats.revenue_transactions, moneyCurrency)}</span>
                         </div>
                     </div>
                 </div>
@@ -300,7 +327,7 @@ export default function DashboardOverview() {
                     <div className="rounded-full bg-yellow-100 p-2 text-yellow-600"><Hourglass size={16} /></div>
                 </div>
                 <div className="flex flex-col">
-                    <span className="text-xl font-bold text-gray-900">{formatNaira(stats.revenue_escrow)}</span>
+                    <span className="text-xl font-bold text-gray-900">{formatMoney(stats.revenue_escrow, moneyCurrency)}</span>
                     <p className="text-[10px] text-yellow-700 mt-2 font-medium italic">Pending delivery</p>
                 </div>
             </div>
@@ -313,7 +340,7 @@ export default function DashboardOverview() {
                     <h3 className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Total GMV</h3>
                     <div className="rounded-full bg-purple-50 p-2 text-purple-600"><ShoppingBag size={16} /></div>
                 </div>
-                <span className="text-xl font-bold text-gray-900">{formatNaira(stats.total_gmv)}</span>
+                <span className="text-xl font-bold text-gray-900">{formatMoney(stats.total_gmv, moneyCurrency)}</span>
                 <p className="text-[10px] text-gray-400 mt-2">Closed sales only</p>
             </div>
         )}
@@ -350,10 +377,13 @@ export default function DashboardOverview() {
           </div>
         </div>
 
-        {/* SPOTLIGHT KPI */}
+        {/* SPOTLIGHT KPI (platform-wide; not country-filtered) */}
         <div className="rounded-xl border border-violet-100 bg-violet-50/30 p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[10px] font-bold uppercase text-violet-700 tracking-wider">Spotlight</h3>
+            <div>
+              <h3 className="text-[10px] font-bold uppercase text-violet-700 tracking-wider">Spotlight</h3>
+              <p className="text-[9px] font-semibold text-violet-500">Platform-wide</p>
+            </div>
             <div className="rounded-full bg-violet-100 p-2 text-violet-700"><Sparkles size={16} /></div>
           </div>
           <div className="space-y-1 text-[11px]">
@@ -392,7 +422,7 @@ export default function DashboardOverview() {
               <p className="text-xs text-gray-500">
                 {isGlobalView
                   ? 'Ops queues are global; select a country for money and warehouse charts.'
-                  : 'Last 7 days — glanceable commerce and ops health'}
+                  : 'Last 7 days. Glanceable commerce and ops health'}
               </p>
             </div>
             {canSeeAnalytics && (
@@ -422,6 +452,7 @@ export default function DashboardOverview() {
                   name="Commission"
                   accent="sky"
                   valueKind="money"
+                  currency={moneyCurrency}
                   gradientId="overview-profit"
                 />
               </ChartCard>
@@ -445,6 +476,7 @@ export default function DashboardOverview() {
                     { key: 'serviceGmv', name: 'Service', color: '#0ea5e9' },
                   ]}
                   valueKind="money"
+                  currency={moneyCurrency}
                 />
               </ChartCard>
             )}
@@ -490,18 +522,26 @@ export default function DashboardOverview() {
                     <p className={`mt-2 text-3xl font-black ${stats.active_disputes > 0 ? 'text-red-700' : 'text-gray-400'}`}>
                       {stats.active_disputes}
                     </p>
-                    <Link href="/dashboard/finance" className="mt-2 inline-block text-[10px] font-bold text-red-700 hover:underline">
-                      Open tribunal →
-                    </Link>
+                    {canOpenTribunal ? (
+                      <Link href="/dashboard/finance" className="mt-2 inline-block text-[10px] font-bold text-red-700 hover:underline">
+                        Open tribunal →
+                      </Link>
+                    ) : (
+                      <p className="mt-2 text-[10px] font-medium text-gray-400">Finance role required</p>
+                    )}
                   </div>
                   <div className="rounded-lg border border-orange-100 bg-orange-50/50 p-4">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Pending KYC</p>
                     <p className={`mt-2 text-3xl font-black ${stats.pending_kyc > 0 ? 'text-orange-700' : 'text-gray-400'}`}>
                       {stats.pending_kyc}
                     </p>
-                    <Link href="/dashboard/moderator" className="mt-2 inline-block text-[10px] font-bold text-orange-700 hover:underline">
-                      Open KYC →
-                    </Link>
+                    {canOpenKyc ? (
+                      <Link href="/dashboard/moderator" className="mt-2 inline-block text-[10px] font-bold text-orange-700 hover:underline">
+                        Open KYC →
+                      </Link>
+                    ) : (
+                      <p className="mt-2 text-[10px] font-medium text-gray-400">Moderator role required</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -514,7 +554,7 @@ export default function DashboardOverview() {
       <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 mb-4">Shortcuts</h3>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {['super_admin', 'moderator', 'support'].includes(role || '') && (
+            {canOpenPath('/dashboard/moderator') && (
               <QuickLink
                 href="/dashboard/moderator"
                 icon={ShieldAlert}
@@ -523,7 +563,7 @@ export default function DashboardOverview() {
                 color="orange"
               />
             )}
-            {['super_admin', 'finance'].includes(role || '') && (
+            {canOpenPath('/dashboard/finance') && (
               <QuickLink
                 href="/dashboard/finance"
                 icon={Activity}
@@ -532,26 +572,28 @@ export default function DashboardOverview() {
                 color="red"
               />
             )}
-            {['super_admin', 'finance', 'support'].includes(role || '') && (
+            {canOpenPath('/dashboard/orders') && (
               <QuickLink href="/dashboard/orders" icon={Package} label="Transaction Ops" count={null} color="blue" />
             )}
-            {['super_admin', 'finance', 'support', 'analyst'].includes(role || '') && (
+            {canOpenPath('/dashboard/payment-incidents') && (
               <QuickLink href="/dashboard/payment-incidents" icon={CreditCard} label="Payment incidents (Paystack)" count={null} color="orange" />
             )}
-            {['super_admin', 'moderator', 'support', 'analyst', 'content'].includes(role || '') && (
+            {canOpenPath('/dashboard/content-reports') && (
               <QuickLink href="/dashboard/content-reports" icon={Inbox} label="Content report inbox" count={null} color="red" />
             )}
-            {['super_admin', 'finance', 'support'].includes(role || '') && (
+            {canOpenPath('/dashboard/bookings') && (
               <QuickLink href="/dashboard/bookings" icon={CalendarCheck} label="Service bookings" count={null} color="blue" />
             )}
-            {['super_admin', 'analyst'].includes(role || '') && (
+            {canOpenPath('/dashboard/onboarding') && (
               <QuickLink href="/dashboard/onboarding" icon={BarChart3} label="Onboarding funnel" count={null} color="blue" />
             )}
-            <QuickLink href="/dashboard/users" icon={Users} label="User Manager" count={null} color="blue" />
-            {role === 'super_admin' && (
+            {canOpenPath('/dashboard/users') && (
+              <QuickLink href="/dashboard/users" icon={Users} label="User Manager" count={null} color="blue" />
+            )}
+            {canOpenPath('/dashboard/observability') && (
               <QuickLink href="/dashboard/observability" icon={Activity} label="Observability (errors)" count={null} color="blue" />
             )}
-            {['super_admin', 'analyst'].includes(role || '') && (
+            {canOpenPath('/dashboard/safety-tests') && (
               <QuickLink href="/dashboard/safety-tests" icon={ShieldCheck} label="QA Hub" count={null} color="blue" />
             )}
           </div>

@@ -208,7 +208,7 @@ export function UserSubscriptionPanel({
           <div className="rounded-lg bg-white/80 border border-violet-100 p-3">
             <p className="text-[9px] font-bold uppercase text-gray-400">Time left</p>
             <p className="text-xs font-bold text-gray-900 mt-1">
-              {daysLeft != null ? `${daysLeft} day(s)` : '—'}
+              {daysLeft != null ? `${daysLeft} day(s)` : '-'}
             </p>
           </div>
         </div>
@@ -237,7 +237,7 @@ export function UserSubscriptionPanel({
               <ActionButton
                 icon={Gem}
                 label="Grant Diamond"
-                hint="1–36 months"
+                hint="1-36 months"
                 onClick={() => { setMonths(1); setPendingAction('grant_diamond') }}
               />
               <ActionButton
