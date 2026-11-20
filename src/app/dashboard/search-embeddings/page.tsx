@@ -481,14 +481,19 @@ export default function SearchEmbeddingsPage() {
             <p className="font-semibold text-zinc-800">Ops checklist</p>
             <ul className="mt-1.5 list-disc space-y-1 pl-4">
               <li>
-                Admin server needs <code className="rounded bg-white px-1">SUPABASE_SERVICE_ROLE_KEY</code>
+                Admin needs <code className="rounded bg-white px-1">SUPABASE_SERVICE_ROLE_KEY</code>
               </li>
               <li>
-                Edge functions deployed:{' '}
+                If Edge returns Unauthorized, set{' '}
+                <code className="rounded bg-white px-1">CRON_SECRET</code> (match Edge secrets) or{' '}
+                <code className="rounded bg-white px-1">GEMINI_API_KEY</code> for direct backfill
+              </li>
+              <li>
+                Edge functions:{' '}
                 <code className="rounded bg-white px-1">generate-product-embeddings</code>,{' '}
                 <code className="rounded bg-white px-1">generate-service-embeddings</code>
               </li>
-              <li>Hourly cron: products :10 UTC · services :25 UTC</li>
+              <li>Hourly cron also backfills in the background once Vault secrets are set</li>
             </ul>
           </div>
         </CardContent>

@@ -4,6 +4,10 @@ import {
   createServiceSupabaseClient,
   invokeSupabaseEdgeFunction,
 } from '../../../../../utils/supabase/service'
+import {
+  embedMissingProductsDirect,
+  embedMissingServicesDirect,
+} from '../../../../../lib/searchEmbeddingsDirect'
 
 type RunPayload = {
   target?: 'products' | 'services' | 'both'
@@ -16,6 +20,12 @@ type BatchResult = {
   target: 'products' | 'services'
   processed: number
   error?: string
+  via?: 'edge' | 'direct'
+}
+
+function isUnauthorized(error: string | null): boolean {
+  if (!error) return false
+  return /unauthorized|invalid jwt|401/i.test(error)
 }
 
 export async function POST(request: Request) {
@@ -54,11 +64,47 @@ export async function POST(request: Request) {
 
   const results: BatchResult[] = []
   let totalProcessed = 0
+  const service = createServiceSupabaseClient()
+
+  const runDirect = async (kind: 'products' | 'services') => {
+    let processed = 0
+    let lastError: string | undefined
+
+    for (let i = 0; i < batches; i += 1) {
+      const outcome =
+        kind === 'products'
+          ? await embedMissingProductsDirect(service as never, limit)
+          : await embedMissingServicesDirect(service as never, limit)
+
+      if (outcome.error && outcome.processed === 0) {
+        lastError = outcome.error
+        break
+      }
+
+      processed += outcome.processed
+      totalProcessed += outcome.processed
+
+      if (outcome.failed > 0 && outcome.failures?.length) {
+        lastError = outcome.failures.map((f) => f.error).join('; ')
+      }
+
+      if (outcome.processed === 0) break
+    }
+
+    results.push({
+      target: kind,
+      processed,
+      via: 'direct',
+      ...(lastError && processed === 0 ? { error: lastError } : lastError ? { error: lastError } : {}),
+    })
+  }
 
   const runTarget = async (kind: 'products' | 'services') => {
     const functionName =
       kind === 'products' ? 'generate-product-embeddings' : 'generate-service-embeddings'
     let processed = 0
+    let edgeAuthFailed = false
+    let edgeError: string | null = null
 
     for (let i = 0; i < batches; i += 1) {
       const { data, error } = await invokeSupabaseEdgeFunction<{ processed?: number }>(functionName, {
@@ -66,8 +112,11 @@ export async function POST(request: Request) {
       })
 
       if (error) {
-        results.push({ target: kind, processed, error })
-        return
+        edgeError = error
+        if (isUnauthorized(error)) {
+          edgeAuthFailed = true
+        }
+        break
       }
 
       const batchProcessed = Number(data?.processed ?? 0)
@@ -77,7 +126,27 @@ export async function POST(request: Request) {
       if (batchProcessed === 0) break
     }
 
-    results.push({ target: kind, processed })
+    if (edgeError && processed === 0) {
+      const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim())
+      if (isUnauthorized(edgeError) || hasGemini) {
+        if (!hasGemini) {
+          results.push({
+            target: kind,
+            processed: 0,
+            via: 'edge',
+            error:
+              'Unauthorized from Edge. Set CRON_SECRET on admin (same as Edge Function secrets) or set GEMINI_API_KEY for direct backfill.',
+          })
+          return
+        }
+        await runDirect(kind)
+        return
+      }
+      results.push({ target: kind, processed: 0, error: edgeError, via: 'edge' })
+      return
+    }
+
+    results.push({ target: kind, processed, via: 'edge' })
   }
 
   try {
@@ -88,7 +157,6 @@ export async function POST(request: Request) {
       await runTarget('services')
     }
 
-    const service = createServiceSupabaseClient()
     const { data: coverage } = await service.rpc('get_search_embedding_coverage')
 
     await auth.supabase.from('admin_audit_logs').insert({
