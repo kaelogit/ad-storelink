@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { AlertTriangle, Gift, Loader2, RefreshCcw, Search, Users } from 'lucide-react'
 
 import { PageHeader } from '../../../components/admin/PageHeader'
+import { DeskLinkPills } from '../../../components/admin/DeskLinkPills'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
@@ -62,6 +63,13 @@ type ReferralStats = {
     source?: string
     notes?: string
   }
+  programHealth?: {
+    codesIssued?: number
+    pendingReview?: number
+    attributionAuditRows?: number
+    hasAttributions?: boolean
+    note?: string
+  }
 }
 
 const FLAG_LABELS: Record<string, { label: string; tone: 'warning' | 'danger' | 'neutral' }> = {
@@ -108,26 +116,31 @@ export default function ReferralsPage() {
   const [loading, setLoading] = useState(true)
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(null)
   const [query, setQuery] = useState('')
+  const [appliedQuery, setAppliedQuery] = useState('')
   const [suspiciousOnly, setSuspiciousOnly] = useState(false)
   const [inviterFilter, setInviterFilter] = useState('')
+  const [appliedInviter, setAppliedInviter] = useState('')
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [reviewingId, setReviewingId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (inviterFromUrl) setInviterFilter(inviterFromUrl)
+    if (inviterFromUrl) {
+      setInviterFilter(inviterFromUrl)
+      setAppliedInviter(inviterFromUrl)
+    }
   }, [inviterFromUrl])
 
   const loadReferrals = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams({
-        q: query.trim(),
+        q: appliedQuery.trim(),
         country: countryCode === ALL_COUNTRIES_CODE ? 'ALL' : countryCode,
         limit: '150',
         offset: '0',
       })
       if (suspiciousOnly) params.set('suspicious', '1')
-      if (inviterFilter.trim()) params.set('inviterId', inviterFilter.trim())
+      if (appliedInviter.trim()) params.set('inviterId', appliedInviter.trim())
 
       const response = await fetch(`/api/admin/referrals/list?${params.toString()}`)
       if (!response.ok) {
@@ -140,6 +153,7 @@ export default function ReferralsPage() {
       const payload = (await response.json().catch(() => ({}))) as { rows?: ReferralRow[]; stats?: ReferralStats }
       setRows(Array.isArray(payload.rows) ? payload.rows : [])
       setStats(payload.stats ?? null)
+      setFeedback(null)
     } catch (err) {
       setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to load referrals.' })
       setRows([])
@@ -147,11 +161,16 @@ export default function ReferralsPage() {
     } finally {
       setLoading(false)
     }
-  }, [countryCode, inviterFilter, query, suspiciousOnly])
+  }, [appliedInviter, appliedQuery, countryCode, suspiciousOnly])
 
   useEffect(() => {
-    loadReferrals()
+    void loadReferrals()
   }, [loadReferrals])
+
+  const applyFilters = () => {
+    setAppliedQuery(query.trim())
+    setAppliedInviter(inviterFilter.trim())
+  }
 
   const reviewReferral = useCallback(async (inviteeId: string, decision: 'approved' | 'rejected', notes: string) => {
     if (!canReview) {
@@ -199,6 +218,11 @@ export default function ReferralsPage() {
     }`
 
   const config = stats?.rewardConfig
+  const health = stats?.programHealth
+  const emptyBecauseFilters =
+    Boolean(appliedQuery || appliedInviter || suspiciousOnly) && (stats?.totalAttributed ?? 0) > 0
+  const emptyProgramCold =
+    (stats?.totalAttributed ?? 0) === 0 && !appliedQuery && !appliedInviter && !suspiciousOnly
 
   // Amounts are major units (e.g. 5000 NGN), not minor.
   const minGmvEntries = useMemo<Array<[string, number]>>(() => {
@@ -215,10 +239,34 @@ export default function ReferralsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Referral Desk"
-        subtitle="Invite attributions, reward payouts, fraud heuristics, and review queue. Rules: store-link-mobile/docs/REFERRAL_FRAUD_RULES.md"
+        subtitle="Invite attributions, coin payouts, fraud holds, and review queue."
+        actions={
+          <DeskLinkPills
+            links={[
+              { href: '/dashboard/users', label: 'Users' },
+              { href: '/dashboard/loyalty', label: 'Loyalty / coins' },
+              { href: '/dashboard/analytics', label: 'Analytics' },
+              { href: '/dashboard/safety-tests', label: 'QA Hub' },
+            ]}
+          />
+        }
       />
 
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+
+      {health ? (
+        <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4 text-xs text-sky-950">
+          <p className="font-bold text-sky-900">Program health</p>
+          <p className="mt-1">
+            Invite codes issued: <span className="font-semibold">{Number(health.codesIssued ?? 0).toLocaleString()}</span>
+            {' · '}
+            Pending review: <span className="font-semibold">{Number(health.pendingReview ?? 0).toLocaleString()}</span>
+            {' · '}
+            Attribution audit rows: <span className="font-semibold">{Number(health.attributionAuditRows ?? 0).toLocaleString()}</span>
+          </p>
+          {health.note ? <p className="mt-1 text-sky-800/90">{health.note}</p> : null}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -262,6 +310,9 @@ export default function ReferralsPage() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') applyFilters()
+                }}
                 placeholder="Search invitee, inviter, email, code, UUID..."
                 className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
               />
@@ -269,12 +320,23 @@ export default function ReferralsPage() {
             <input
               value={inviterFilter}
               onChange={(e) => setInviterFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applyFilters()
+              }}
               placeholder="Filter by inviter UUID"
               className="w-56 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-emerald-500"
             />
             <button
               type="button"
-              onClick={loadReferrals}
+              onClick={applyFilters}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadReferrals()}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
             >
@@ -321,7 +383,10 @@ export default function ReferralsPage() {
               <button
                 key={inv.inviter_id}
                 type="button"
-                onClick={() => setInviterFilter(inv.inviter_id)}
+                onClick={() => {
+                  setInviterFilter(inv.inviter_id)
+                  setAppliedInviter(inv.inviter_id)
+                }}
                 className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left hover:border-emerald-300 hover:bg-emerald-50/50 transition"
               >
                 <p className="text-xs font-bold text-gray-900">{inv.inviter_name || inv.inviter_id.slice(0, 8)}</p>
@@ -337,7 +402,18 @@ export default function ReferralsPage() {
           <Loader2 className="h-6 w-6 animate-spin text-gray-500" />
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState title="No referrals found" message="Try a different filter, country, or search term." />
+        <EmptyState
+          icon={Gift}
+          title={emptyProgramCold ? 'No attributions yet' : 'No referrals match'}
+          message={
+            emptyProgramCold
+              ? health?.note ||
+                'Desk is healthy. Invitees appear here after set_my_referred_by succeeds (signup with invite code). Reward constants above are live.'
+              : emptyBecauseFilters
+                ? 'Clear search / inviter / suspicious filter, or switch country to All.'
+                : 'Try All countries, clear filters, or wait for the first invite redemption.'
+          }
+        />
       ) : (
         <DataTable>
           <DataTableHeader>
