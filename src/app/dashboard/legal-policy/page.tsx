@@ -126,15 +126,28 @@ export default function LegalPolicyPage() {
     return `${STORE_APP_BASE}/${path}/${effectiveCountry.toLowerCase()}`
   }, [effectiveCountry, policyType])
 
+  const versions = useMemo(() => {
+    const list = Array.isArray(desk?.versions) ? desk!.versions! : []
+    return list.slice(0, 12)
+  }, [desk?.versions])
+
   const submitPublish = async ({ category, reason }: { category: string; reason: string }) => {
     setSubmitting(true)
     try {
+      if (!titleDraft.trim()) {
+        throw new Error('Title is required before publish.')
+      }
+
       let parsedBody: unknown = bodyDraft
       if (format === 'structured_json') {
         try {
           parsedBody = JSON.parse(bodyDraft)
         } catch {
           throw new Error('Body must be valid JSON for structured_json format.')
+        }
+        const sections = (parsedBody as { sections?: unknown })?.sections
+        if (!Array.isArray(sections) || sections.length === 0) {
+          throw new Error('Structured JSON must include a non-empty "sections" array.')
         }
       }
 
@@ -200,13 +213,20 @@ export default function LegalPolicyPage() {
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
         <div className="flex items-start gap-3">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
-          <div className="space-y-1 text-xs text-blue-900">
+          <div className="space-y-1.5 text-xs text-blue-900">
             <p className="font-bold">Publishing model</p>
             <p>
-              Each publish creates a new version. Clients cache policy for ~30 minutes. Structured JSON uses{' '}
-              <code className="rounded bg-white/80 px-1">{`{ "sections": [{ "title", "intro?", "bullets?", "body?" }] }`}</code>.
+              Each publish creates a new immutable version. Mobile/web clients call{' '}
+              <code className="rounded bg-white/80 px-1">get_legal_policy</code> and cache ~30 minutes.
             </p>
-            <p>{desk?.methodology?.deployNote}</p>
+            <p>
+              <strong>App / Web / Storefront are separate documents.</strong> Changing surface loads a different
+              published row — publish each surface you need live.
+            </p>
+            <p>
+              Structured JSON shape:{' '}
+              <code className="rounded bg-white/80 px-1">{`{ "sections": [{ "title", "intro?", "bullets?", "body?" }] }`}</code>
+            </p>
             <p>
               Public URL: <a href={publicUrl} className="underline" target="_blank" rel="noreferrer">{publicUrl}</a>
             </p>
@@ -271,12 +291,40 @@ export default function LegalPolicyPage() {
 
         {desk?.current?.version ? (
           <p className="text-xs text-gray-500">
-            Current published: v{desk.current.version}
+            Current published: <span className="font-semibold text-gray-800">v{desk.current.version}</span>
             {desk.current.publishedAt ? ` · ${new Date(desk.current.publishedAt).toLocaleString()}` : ''}
+            {' · '}
+            {effectiveCountry}/{surface}
           </p>
         ) : (
-          <p className="text-xs text-amber-700">No published document yet for this scope.</p>
+          <p className="text-xs text-amber-700">
+            No published document yet for {policyType} · {effectiveCountry} · {surface}.
+          </p>
         )}
+
+        {versions.length > 0 ? (
+          <div className="rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Version history</p>
+            <ul className="mt-1.5 space-y-1">
+              {versions.map((v) => (
+                <li key={v.version} className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-600">
+                  <span>
+                    <span className="font-semibold text-gray-800">v{v.version}</span>
+                    {v.title ? ` · ${v.title}` : ''}
+                  </span>
+                  <span className="text-gray-400">
+                    {v.publishedAt ? new Date(v.publishedAt).toLocaleString() : '—'}
+                    {desk?.current?.version === v.version ? (
+                      <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        live
+                      </span>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div>

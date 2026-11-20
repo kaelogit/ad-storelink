@@ -40,6 +40,9 @@ export async function POST(request: Request) {
   if (body.body == null) {
     return NextResponse.json({ error: 'body is required' }, { status: 400 })
   }
+  if (!body.title?.trim()) {
+    return NextResponse.json({ error: 'title is required' }, { status: 400 })
+  }
 
   const surface = body.surface || 'app'
   const format = body.format || 'structured_json'
@@ -48,6 +51,18 @@ export async function POST(request: Request) {
   }
   if (!VALID_FORMATS.has(format)) {
     return NextResponse.json({ error: 'Invalid format' }, { status: 400 })
+  }
+  if (format === 'structured_json') {
+    const sections =
+      typeof body.body === 'object' && body.body !== null
+        ? (body.body as { sections?: unknown }).sections
+        : null
+    if (!Array.isArray(sections) || sections.length === 0) {
+      return NextResponse.json(
+        { error: 'structured_json body must include a non-empty sections array' },
+        { status: 400 },
+      )
+    }
   }
 
   const countryCode =
