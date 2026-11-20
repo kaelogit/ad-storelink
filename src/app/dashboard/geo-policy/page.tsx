@@ -37,10 +37,26 @@ const MODE_OPTIONS = [
 ] as const
 
 const SURFACE_OPTIONS = [
-  { key: 'app_deep_link', label: 'App deep links', help: 'RegionBlockedScreen on product, reel, and store routes.' },
-  { key: 'checkout', label: 'Checkout / orders', help: 'orders INSERT trigger rejects mismatched countries.' },
-  { key: 'chat', label: 'Chat initiation', help: 'Reserved for future chat guard.' },
-  { key: 'discovery', label: 'Discovery feeds', help: 'Explore/Discover RPC country filters.' },
+  {
+    key: 'app_deep_link',
+    label: 'App deep links',
+    help: 'RegionBlockedScreen on product, service, reel, and seller profile routes.',
+  },
+  {
+    key: 'checkout',
+    label: 'Checkout / orders',
+    help: 'DB trigger on orders INSERT rejects mismatched buyer/seller countries.',
+  },
+  {
+    key: 'chat',
+    label: 'Chat initiation',
+    help: 'Enforced in startChat (client) via is_cross_country_blocked.',
+  },
+  {
+    key: 'discovery',
+    label: 'Discovery feeds',
+    help: 'Home/Explore RPCs always filter by viewer country. Toggling this surface alone does not open cross-border inventory — use mode carefully and expect feed SQL filters to remain same-country.',
+  },
 ] as const
 
 const REASON_CATEGORIES = [
@@ -217,7 +233,7 @@ export default function GeoPolicyPage() {
             </ul>
             <p>{effectivePolicy?.deployNote ?? 'Policy changes apply at runtime via get_geo_visibility_config (no app deploy required after client helper ships).'}</p>
             <p className="border-t border-blue-200 pt-2 font-semibold">
-              Launched markets: NG, GH, KE, ZA. Each is a separate marketplace. Ghana users cannot browse Nigerian sellers until you enable cross-border pairs or open mode here.
+              Launched markets: NG, GH, KE, ZA. Each is a separate marketplace. Ghana users cannot message/checkout Nigerian sellers while mode is strict. Discovery feeds also filter by the viewer&apos;s country in SQL (independent of this desk&apos;s discovery toggle).
             </p>
           </div>
         </div>
