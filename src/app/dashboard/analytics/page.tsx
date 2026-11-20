@@ -133,6 +133,24 @@ export default function AnalyticsWarehousePage() {
   const onboarding = latest?.onboarding
   const rangeLabel = `${days}d`
   const hasSeries = chartData.length > 0
+  const latestDayLabel = chartData.length > 0 ? chartData[chartData.length - 1]?.day : null
+
+  /** KPIs for the selected window (not a single quiet latest day — that looked “broken”). */
+  const rangeKpis = useMemo(() => {
+    const n = chartData.length
+    const sum = (key: keyof (typeof chartData)[number]) =>
+      chartData.reduce((acc, row) => acc + Number(row[key] ?? 0), 0)
+    const avgDau = n > 0 ? sum('dau') / n : 0
+    return {
+      avgDau,
+      gmv: sum('gmv'),
+      productOrders: sum('productOrders'),
+      serviceOrders: sum('serviceOrders'),
+      signups: sum('signups'),
+      firstOrderBuyers: sum('firstOrderBuyers'),
+      daysWithData: n,
+    }
+  }, [chartData])
 
   const funnelSteps = useMemo(
     () => [
@@ -146,11 +164,6 @@ export default function AnalyticsWarehousePage() {
         value: Number(onboarding?.completedOnboarding ?? 0),
         color: '#059669',
       },
-      {
-        name: 'Stuck',
-        value: Number(onboarding?.stuckCount ?? 0),
-        color: '#d97706',
-      },
     ],
     [onboarding],
   )
@@ -159,7 +172,7 @@ export default function AnalyticsWarehousePage() {
     <div className="space-y-6">
       <PageHeader
         title="Analytics"
-        subtitle="Commerce, audience, and conversion intelligence from the daily warehouse."
+        subtitle="Daily warehouse snapshots (T+1 UTC). KPIs sum/average the selected window; onboarding is a trailing live funnel embed."
         actions={
           <div className="flex flex-col items-end gap-2">
             <DeskLinkPills
@@ -224,43 +237,59 @@ export default function AnalyticsWarehousePage() {
         />
       ) : (
         <>
+          {latestDayLabel ? (
+            <p className="text-[11px] text-gray-500">
+              Showing <span className="font-semibold text-gray-700">{rangeLabel}</span> window
+              {rangeKpis.daysWithData > 0 ? ` (${rangeKpis.daysWithData} snapshot days)` : ''}. Latest snapshot day:{' '}
+              <span className="font-semibold text-gray-700">{latestDayLabel}</span>
+              {latest.dau != null ? (
+                <>
+                  {' '}
+                  · that day alone: DAU {formatCount(latest.dau)}, GMV {moneyLabel(latest.gmvTotal)}, orders{' '}
+                  {formatCount(latest.productOrders)}
+                </>
+              ) : null}
+              .
+            </p>
+          ) : null}
+
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <KpiSparkCard
               icon={Users}
-              label="DAU"
-              value={formatCount(latest.dau)}
+              label={`Avg DAU (${rangeLabel})`}
+              value={formatCount(Math.round(rangeKpis.avgDau))}
               sparkData={chartData}
               sparkKey="dau"
               accent="sky"
             />
             <KpiSparkCard
               icon={TrendingUp}
-              label="GMV"
-              value={moneyLabel(latest.gmvTotal)}
+              label={`GMV (${rangeLabel})`}
+              value={moneyLabel(rangeKpis.gmv)}
               sparkData={isGlobalView ? [] : chartData}
               sparkKey="gmv"
               accent="emerald"
             />
             <KpiSparkCard
               icon={ShoppingBag}
-              label="Product orders"
-              value={formatCount(latest.productOrders)}
+              label={`Product orders (${rangeLabel})`}
+              value={formatCount(rangeKpis.productOrders)}
               sparkData={chartData}
               sparkKey="productOrders"
               accent="orange"
             />
             <KpiSparkCard
               icon={CalendarCheck}
-              label="Service bookings"
-              value={formatCount(latest.serviceOrders)}
+              label={`Service bookings (${rangeLabel})`}
+              value={formatCount(rangeKpis.serviceOrders)}
               sparkData={chartData}
               sparkKey="serviceOrders"
               accent="amber"
             />
             <KpiSparkCard
               icon={UserPlus}
-              label="Signups"
-              value={formatCount(latest.signups)}
+              label={`Signups (${rangeLabel})`}
+              value={formatCount(rangeKpis.signups)}
               sparkData={chartData}
               sparkKey="signups"
               accent="slate"
@@ -274,6 +303,11 @@ export default function AnalyticsWarehousePage() {
               accent="rose"
             />
           </div>
+          <p className="text-[10px] text-gray-400">
+            Onboarding rate is a trailing ~30d funnel embedded at snapshot time (not summed across {rangeLabel}). Stuck:{' '}
+            {formatCount(onboarding?.stuckCount)} · First-time product buyers in window:{' '}
+            {formatCount(rangeKpis.firstOrderBuyers)}.
+          </p>
 
           <div className="grid gap-4 lg:grid-cols-2">
             {!isGlobalView ? (
@@ -346,8 +380,8 @@ export default function AnalyticsWarehousePage() {
 
             <ChartCard
               title="Onboarding conversion"
-              subtitle="Latest cohort funnel (same pipe as Onboarding desk)"
-              rangeLabel={rangeLabel}
+              subtitle="Trailing cohort → completed (stuck is complementary, not a funnel step)"
+              rangeLabel="~30d embed"
               accent="amber"
               loading={loading}
               empty={funnelSteps.every((s) => s.value === 0)}
@@ -368,7 +402,7 @@ export default function AnalyticsWarehousePage() {
 
           <ChartCard
             title="First-time buyers"
-            subtitle="New buyers placing their first paid order"
+            subtitle="Buyers whose first qualifying product order falls that day (services not included yet)"
             rangeLabel={rangeLabel}
             accent="slate"
             loading={loading}
