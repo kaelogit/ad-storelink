@@ -344,9 +344,15 @@ export default function ExperimentsDashboardPage() {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Ranking Experiments"
-        subtitle="Home / Explore v2 rollout, calibration experiments, frozen v3 knobs, and session metrics."
+        subtitle="Single desk for Home/Explore v2 ramp, kill switch, experiment weights, and session metrics."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link
+              href="/dashboard/feature-flags?category=product"
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
+            >
+              Product flags
+            </Link>
             <button
               type="button"
               onClick={() => void loadData()}
@@ -371,6 +377,14 @@ export default function ExperimentsDashboardPage() {
       />
 
       {feedback ? <ActionFeedback tone={feedback.tone} message={feedback.message} /> : null}
+
+      <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+        <strong>This desk owns ranking rollout.</strong> Product flags and v3 knob edits stay on{' '}
+        <Link href="/dashboard/feature-flags" className="font-semibold text-zinc-900 underline">
+          Feature Flags
+        </Link>
+        . Ranking % controls there are disabled to avoid two sources of truth.
+      </p>
 
       {!roleLoading && !canEdit ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -532,14 +546,14 @@ export default function ExperimentsDashboardPage() {
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-900">v3 calibration knobs</h2>
                   <p className="mt-1 text-xs text-zinc-500">
-                    Read-only runtime multipliers. Edit under Feature Flags → calibration.
+                    Read-only here. Edit multipliers on Feature Flags → Calibration.
                   </p>
                 </div>
                 <Link
-                  href="/dashboard/feature-flags"
+                  href="/dashboard/feature-flags?category=calibration"
                   className="rounded-md border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
                 >
-                  Open Feature Flags
+                  Edit on Feature Flags
                 </Link>
               </div>
             </CardHeader>

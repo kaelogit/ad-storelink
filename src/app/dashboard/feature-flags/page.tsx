@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Flag, Loader2, RefreshCcw, Search } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { Flag, FlaskConical, Loader2, RefreshCcw, Search } from 'lucide-react'
 import { PageHeader } from '../../../components/admin/PageHeader'
 import { ActionFeedback } from '../../../components/admin/ActionFeedback'
 import { ActionReasonModal } from '../../../components/admin/ActionReasonModal'
@@ -10,6 +11,7 @@ import { StatusBadge } from '../../../components/admin/StatusBadge'
 import { EmptyState } from '../../../components/admin/EmptyState'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui/DataTable'
 import { parseApiError } from '../../../utils/http'
+import { isRankingRolloutFlag } from '../../../utils/rankingDesk'
 import type { AdminRole } from '../../../types/admin'
 import { createClient } from '../../../utils/supabase/client'
 
@@ -54,6 +56,7 @@ const CATEGORY_TABS = [
 
 export default function FeatureFlagsPage() {
   const supabase = createClient()
+  const searchParams = useSearchParams()
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null)
   const [rows, setRows] = useState<FlagRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -65,6 +68,13 @@ export default function FeatureFlagsPage() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const canEdit = adminRole === 'super_admin'
+
+  useEffect(() => {
+    const raw = searchParams.get('category')
+    if (raw && CATEGORY_TABS.some((t) => t.id === raw)) {
+      setCategory(raw as (typeof CATEGORY_TABS)[number]['id'])
+    }
+  }, [searchParams])
 
   useEffect(() => {
     let mounted = true
@@ -113,6 +123,14 @@ export default function FeatureFlagsPage() {
 
   const submitUpdate = async (payload: { category: string; reason: string }) => {
     if (!pendingUpdate) return
+    if (isRankingRolloutFlag(pendingUpdate.key)) {
+      setFeedback({
+        tone: 'info',
+        message: 'Home/Explore v2 rollout is controlled on Experiments — use that desk instead.',
+      })
+      setPendingUpdate(null)
+      return
+    }
     setSubmitting(true)
     try {
       const response = await fetch('/api/admin/feature-flags/update', {
@@ -150,22 +168,50 @@ export default function FeatureFlagsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Feature Flags"
-        subtitle="Toggle product and platform flags without SQL. Ranking v2 quick controls live on Experiments."
+        subtitle="Product, platform, and calibration knobs. Home/Explore v2 ramp lives only on Experiments."
       />
 
       {feedback && <ActionFeedback tone={feedback.tone} message={feedback.message} />}
+
+      <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-xs text-violet-950">
+        <p className="font-semibold text-violet-900">Who owns what</p>
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-violet-900/90">
+          <li>
+            <strong>This desk:</strong> product flags (Spotlight, follow, ads, escrow…) and v3 calibration JSON.
+          </li>
+          <li>
+            <strong>Experiments:</strong> Home/Explore v2 % ramp, kill switch, experiment weights, session metrics.
+          </li>
+        </ul>
+        <Link
+          href="/dashboard/experiments"
+          className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-violet-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-violet-800 hover:bg-violet-50"
+        >
+          <FlaskConical className="h-3.5 w-3.5" />
+          Open Experiments
+        </Link>
+      </div>
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-xs text-blue-900 space-y-2">
         <p className="font-bold uppercase tracking-wider text-[10px] text-blue-600">Staging-safe workflow</p>
         <ol className="list-decimal list-inside space-y-1 text-blue-800">
           <li>Validate changes on <strong>staging</strong> first (same flag keys).</li>
-          <li>Start with low rollout (1-5%) for user-facing flags; watch Observability + session metrics.</li>
+          <li>Start with low rollout (1-5%) for user-facing product flags; watch Observability.</li>
           <li>Document reason in the confirm modal. It appears in Audit Log as last changed by.</li>
-          <li>For ranking v2 kill switch / experiment freeze, use <Link href="/dashboard/experiments" className="font-bold underline">Experiments</Link>.</li>
-          <li>Production rollback: set <code className="font-mono">enabled=false</code> or rollout <code className="font-mono">0%</code>.</li>
+          <li>
+            Ranking v2 ramp / freeze / kill switch: use{' '}
+            <Link href="/dashboard/experiments" className="font-bold underline">
+              Experiments
+            </Link>{' '}
+            only (controls here are disabled for those keys).
+          </li>
+          <li>
+            Product rollback: set <code className="font-mono">enabled=false</code> or rollout{' '}
+            <code className="font-mono">0%</code>.
+          </li>
         </ol>
         <p className="text-blue-800 pt-1">
-          Full staging ↔ prod checklist (migrations, parity export, ramp):{' '}
+          Full staging ↔ prod checklist:{' '}
           <span className="font-mono text-[10px]">docs/FEATURE_FLAG_STAGING_PROD_PARITY.md</span>
           {' '}· ranking:{' '}
           <span className="font-mono text-[10px]">RANKING_V2_ROLLOUT_CHECKLIST.md</span>
@@ -243,6 +289,19 @@ export default function FeatureFlagsPage() {
         </div>
       ) : null}
 
+      {category === 'ranking' ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950">
+          <p className="font-semibold">Ranking rollout is view-only here</p>
+          <p className="mt-1 text-amber-900/90">
+            Change % / Off, freeze variants, or hit kill switch on{' '}
+            <Link href="/dashboard/experiments" className="font-bold underline">
+              Experiments
+            </Link>
+            . Calibration JSON still edits under the Calibration tab.
+          </p>
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="flex justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
@@ -264,11 +323,16 @@ export default function FeatureFlagsPage() {
             </DataTableRow>
           </DataTableHeader>
           <DataTableBody>
-            {rows.map((row) => (
+            {rows.map((row) => {
+              const rankingOwned = isRankingRolloutFlag(row.key)
+              return (
                 <DataTableRow key={row.key}>
                   <DataTableCell className="align-top max-w-md">
                     <p className="font-mono text-xs font-bold text-gray-900">{row.key}</p>
                     <p className="text-[10px] text-gray-500 mt-1">{row.description || '-'}</p>
+                    {rankingOwned ? (
+                      <p className="mt-1 text-[10px] font-semibold text-amber-700">Managed on Experiments</p>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => setExpandedKey(expandedKey === row.key ? null : row.key)}
@@ -304,17 +368,27 @@ export default function FeatureFlagsPage() {
                     )}
                   </DataTableCell>
                   <DataTableCell className="align-top text-right">
-                    {canEdit ? (
+                    {rankingOwned ? (
+                      <Link
+                        href="/dashboard/experiments"
+                        className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-semibold text-violet-800 hover:bg-violet-100"
+                      >
+                        <FlaskConical className="h-3 w-3" />
+                        Open Experiments
+                      </Link>
+                    ) : canEdit ? (
                       <div className="flex flex-wrap justify-end gap-1">
                         {ROLLOUT_PRESETS.map((pct) => (
                           <button
                             key={pct}
                             type="button"
-                            onClick={() => setPendingUpdate({
-                              key: row.key,
-                              enabled: pct > 0,
-                              rolloutPercent: pct,
-                            })}
+                            onClick={() =>
+                              setPendingUpdate({
+                                key: row.key,
+                                enabled: pct > 0,
+                                rolloutPercent: pct,
+                              })
+                            }
                             className="rounded border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-700 hover:border-violet-300"
                           >
                             {pct === 0 ? 'Off' : `${pct}%`}
@@ -324,14 +398,10 @@ export default function FeatureFlagsPage() {
                     ) : (
                       <span className="text-[10px] text-gray-400">Read-only</span>
                     )}
-                    {row.key.includes('rank_v2') ? (
-                      <Link href="/dashboard/experiments" className="block text-[10px] font-bold text-violet-600 mt-2">
-                        Ranking desk →
-                      </Link>
-                    ) : null}
                   </DataTableCell>
                 </DataTableRow>
-            ))}
+              )
+            })}
           </DataTableBody>
         </DataTable>
       )}

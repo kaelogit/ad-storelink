@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiAdminContext } from '../../../../../utils/auth/apiAdmin'
+import { isRankingRolloutFlag } from '../../../../../utils/rankingDesk'
 
 type FlagUpdatePayload = {
   key?: string
@@ -24,6 +25,15 @@ export async function POST(request: Request) {
 
   if (!key || !reason) {
     return NextResponse.json({ error: 'key and reason are required' }, { status: 400 })
+  }
+  if (isRankingRolloutFlag(key)) {
+    return NextResponse.json(
+      {
+        error:
+          'Home/Explore v2 rollout is managed on Experiments (ramp, freeze, kill switch). Open /dashboard/experiments.',
+      },
+      { status: 400 },
+    )
   }
   if (rolloutPercent < 0 || rolloutPercent > 100) {
     return NextResponse.json({ error: 'rolloutPercent must be 0-100' }, { status: 400 })
