@@ -18,7 +18,7 @@ Run these in the **Supabase SQL Editor** (or via `supabase db push` from the rep
    - Allows admins to update their own row (used by the record-login API).
 
 3. **`admin_sessions.ip` as text**  
-   File: `store-link-mobile/supabase/migrations/20261120180000_admin_sessions_ip_text.sql`  
+   File: `store-link-mobile/supabase/migrations/20261122190000_admin_sessions_ip_text.sql`  
    - Changes `ip` from `inet` to `text` so proxy / IPv6 values do not fail inserts (symptom: Staff shows last login, Sessions stays empty).
 
 ## After running
