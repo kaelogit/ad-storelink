@@ -8,7 +8,7 @@ type StaffInvitePayload = {
   role?: AdminRole
 }
 
-const ALLOWED_ROLES = new Set<AdminRole>(['moderator', 'finance', 'support', 'content'])
+const ALLOWED_ROLES = new Set<AdminRole>(['moderator', 'finance', 'support', 'content', 'analyst'])
 
 export async function POST(request: Request) {
   const auth = await getApiAdminContext(['super_admin'])

@@ -10,6 +10,7 @@ import { ConfirmActionModal } from '../../../components/admin/ConfirmActionModal
 import { useTableStateFromUrl } from '../../../hooks/useTableStateFromUrl'
 import { parseApiError } from '../../../utils/http'
 import { StatusBadge } from '../../../components/admin/StatusBadge'
+import { EmptyState } from '../../../components/admin/EmptyState'
 import type { AdminAuditLog, AdminUser } from '../../../types/admin'
 import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from '../../../components/ui'
 import {
@@ -23,7 +24,10 @@ import {
   Globe,
   RotateCcw,
   Activity,
+  ExternalLink,
 } from 'lucide-react'
+
+const SMOKE_TESTS_URL = process.env.NEXT_PUBLIC_SMOKE_TESTS_URL?.trim() || ''
 
 type AdminSession = {
   id: string
@@ -71,6 +75,10 @@ export default function SuperAdminPage() {
     id: string
     email: string
     currentStatus: boolean
+  } | null>(null)
+  const [pendingSecurityReset, setPendingSecurityReset] = useState<{
+    id: string
+    email: string
   } | null>(null)
   const [pendingSession, setPendingSession] = useState<AdminSession | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(false)
@@ -173,6 +181,34 @@ export default function SuperAdminPage() {
     loadData()
   }
 
+  const requestSecurityReset = (id: string, email: string) => {
+    setPendingSecurityReset({ id, email })
+  }
+
+  const executeSecurityReset = async () => {
+    if (!pendingSecurityReset) return
+    const { id, email } = pendingSecurityReset
+    setFeedback({ tone: 'info', message: `Force-resetting sessions for ${email}...` })
+    const response = await fetch('/api/admin/staff/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ staffId: id }),
+    })
+    setPendingSecurityReset(null)
+    if (!response.ok) {
+      const errorMessage = await parseApiError(response, 'Failed to reset sessions.')
+      setFeedback({ tone: 'error', message: errorMessage })
+      return
+    }
+    const payload = (await response.json().catch(() => ({}))) as { revokedCount?: number }
+    const count = payload.revokedCount ?? 0
+    setFeedback({
+      tone: 'success',
+      message: `Security reset for ${email}: ${count} session${count === 1 ? '' : 's'} revoked.`,
+    })
+    if (activeTab === 'sessions') loadData()
+  }
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault()
     setStatus('loading')
@@ -236,18 +272,29 @@ export default function SuperAdminPage() {
         }
         description={
           pendingStaffAction?.currentStatus
-            ? 'This admin will lose access immediately. Their session will be invalidated.'
+            ? 'This admin will lose access immediately. All of their active sessions will be revoked.'
             : 'This admin will regain access and can sign in again.'
         }
         impactSummary={
           pendingStaffAction?.currentStatus
-            ? 'They will be logged out and cannot access the admin panel until reactivated.'
+            ? 'They will be logged out everywhere and cannot access the admin panel until reactivated.'
             : 'They can sign in and use the admin panel according to their role.'
         }
         danger={pendingStaffAction?.currentStatus === true}
         confirmLabel={pendingStaffAction?.currentStatus ? 'Suspend' : 'Activate'}
         onClose={() => setPendingStaffAction(null)}
         onConfirm={executeStaffStatusChange}
+      />
+
+      <ConfirmActionModal
+        open={pendingSecurityReset !== null}
+        title={`Force security reset for ${pendingSecurityReset?.email ?? ''}?`}
+        description="Revoke every active session for this staff member without suspending their account."
+        impactSummary="They stay active in Staff List but must sign in again on every device. Account access is not suspended."
+        danger
+        confirmLabel="Reset sessions"
+        onClose={() => setPendingSecurityReset(null)}
+        onConfirm={executeSecurityReset}
       />
 
       <ConfirmActionModal
@@ -283,84 +330,93 @@ export default function SuperAdminPage() {
             </button>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase text-[10px] font-bold tracking-wider">
-                <tr>
-                  <th className="px-6 py-4">Staff Member</th>
-                  <th className="px-6 py-4">Role</th>
-                  <th className="px-6 py-4">Session Info</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4 text-right">Security Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {admins.map((admin) => (
-                  <tr key={admin.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`h-9 w-9 rounded-full flex items-center justify-center font-bold text-sm ${
-                            admin.is_active ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-100 text-gray-400'
-                          }`}
-                        >
-                          {admin.full_name?.[0] || admin.email[0].toUpperCase()}
-                        </div>
-                        <div>
-                          <p className={`font-semibold ${admin.is_active ? 'text-gray-900' : 'text-gray-400'}`}>
-                            {admin.full_name}
-                          </p>
-                          <p className="text-xs text-gray-400">{admin.email}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <RoleBadge role={admin.role} />
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-gray-600 font-medium">
-                          {admin.last_login ? new Date(admin.last_login).toLocaleDateString() : 'No Login Yet'}
-                        </span>
-                        <span className="text-[10px] text-gray-400 flex items-center gap-1">
-                          <Globe size={10} /> IP: {admin.last_login_ip || '---'}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <StatusBadge label={admin.is_active ? 'ACTIVE' : 'SUSPENDED'} tone={admin.is_active ? 'success' : 'danger'} />
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      {admin.role !== 'super_admin' && (
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => requestStaffStatusChange(admin.id, admin.is_active, admin.email)}
-                            className={`p-2 rounded-lg border transition ${
-                              admin.is_active
-                                ? 'text-gray-400 border-gray-100 hover:text-red-600 hover:border-red-100 hover:bg-red-50'
-                                : 'text-green-600 border-green-100 bg-green-50 hover:bg-green-100'
-                            }`}
-                            title={admin.is_active ? 'Kill Session (Suspend)' : 'Restore Access'}
-                          >
-                            <Ban size={16} />
-                          </button>
-                          <button
-                            className="p-2 text-gray-400 border border-gray-100 hover:text-blue-600 hover:border-blue-100 hover:bg-blue-50 rounded-lg transition"
-                            title="Force Security Reset"
-                          >
-                            <RotateCcw size={16} />
-                          </button>
-                        </div>
-                      )}
-                      {admin.role === 'super_admin' && (
-                        <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">Protected</span>
-                      )}
-                    </td>
+          {admins.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No staff yet"
+              message="Invite a moderator, finance, support, content, or analyst teammate to get started."
+            />
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase text-[10px] font-bold tracking-wider">
+                  <tr>
+                    <th className="px-6 py-4">Staff Member</th>
+                    <th className="px-6 py-4">Role</th>
+                    <th className="px-6 py-4">Session Info</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Security Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {admins.map((admin) => (
+                    <tr key={admin.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`h-9 w-9 rounded-full flex items-center justify-center font-bold text-sm ${
+                              admin.is_active ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-100 text-gray-400'
+                            }`}
+                          >
+                            {admin.full_name?.[0] || admin.email[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <p className={`font-semibold ${admin.is_active ? 'text-gray-900' : 'text-gray-400'}`}>
+                              {admin.full_name}
+                            </p>
+                            <p className="text-xs text-gray-400">{admin.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <RoleBadge role={admin.role} />
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-gray-600 font-medium">
+                            {admin.last_login ? new Date(admin.last_login).toLocaleDateString() : 'No Login Yet'}
+                          </span>
+                          <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                            <Globe size={10} /> IP: {admin.last_login_ip || '---'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <StatusBadge label={admin.is_active ? 'ACTIVE' : 'SUSPENDED'} tone={admin.is_active ? 'success' : 'danger'} />
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {admin.role !== 'super_admin' && (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => requestStaffStatusChange(admin.id, admin.is_active, admin.email)}
+                              className={`p-2 rounded-lg border transition ${
+                                admin.is_active
+                                  ? 'text-gray-400 border-gray-100 hover:text-red-600 hover:border-red-100 hover:bg-red-50'
+                                  : 'text-green-600 border-green-100 bg-green-50 hover:bg-green-100'
+                              }`}
+                              title={admin.is_active ? 'Suspend access' : 'Restore Access'}
+                            >
+                              <Ban size={16} />
+                            </button>
+                            <button
+                              onClick={() => requestSecurityReset(admin.id, admin.email)}
+                              className="p-2 text-gray-400 border border-gray-100 hover:text-blue-600 hover:border-blue-100 hover:bg-blue-50 rounded-lg transition"
+                              title="Force Security Reset (revoke all sessions)"
+                            >
+                              <RotateCcw size={16} />
+                            </button>
+                          </div>
+                        )}
+                        {admin.role === 'super_admin' && (
+                          <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">Protected</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       ) : activeTab === 'sessions' ? (
         <div className="space-y-4">
@@ -372,9 +428,11 @@ export default function SuperAdminPage() {
               <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
             </div>
           ) : sessions.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-12 text-center text-gray-400">
-              No active admin sessions recorded yet.
-            </div>
+            <EmptyState
+              icon={Activity}
+              title="No active sessions"
+              message="Sessions appear here after staff sign in. Use Force Security Reset on the Staff List to revoke all devices for one person."
+            />
           ) : (
             <DataTable>
               <DataTableHeader>
@@ -439,8 +497,19 @@ export default function SuperAdminPage() {
           )}
         </div>
       ) : (
-        /* 🕵️‍♂️ AUDIT LOG VIEW (The Black Box) */
+        /* 🕵️‍♂️ AUDIT LOG VIEW (staff-scoped quick view) */
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-gray-500">
+              Recent staff and security actions (last 100). For full platform mutations, open the Audit Log desk.
+            </p>
+            <Link
+              href="/dashboard/audit"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:underline"
+            >
+              Open full Audit Log <ExternalLink size={12} />
+            </Link>
+          </div>
           <form
             className="flex gap-4 items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"
             onSubmit={(e) => {
@@ -572,10 +641,11 @@ export default function SuperAdminPage() {
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
                 >
-                  <option value="moderator">🛡️ Moderator (KYC & Trust)</option>
-                  <option value="finance">💰 Finance (Payouts & Fees)</option>
-                  <option value="support">🎧 Support (User Help)</option>
-                  <option value="content">🎨 Content (CMO / Growth)</option>
+                  <option value="moderator">Moderator (KYC & Trust)</option>
+                  <option value="finance">Finance (Payouts & Fees)</option>
+                  <option value="support">Support (User Help)</option>
+                  <option value="content">Content (CMO / Growth)</option>
+                  <option value="analyst">Analyst (Read-mostly analytics)</option>
                 </select>
               </div>
               <button
@@ -598,13 +668,24 @@ export default function SuperAdminPage() {
           </Link>
           .
         </p>
-        <p>
-          Optional: set{' '}
-          <code className="rounded bg-gray-50 px-1 py-0.5 text-[10px] border border-gray-200">
-            NEXT_PUBLIC_SMOKE_TESTS_URL
-          </code>{' '}
-          to deep-link CI runs from super-admin settings.
-        </p>
+        {SMOKE_TESTS_URL ? (
+          <a
+            href={SMOKE_TESTS_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:underline"
+          >
+            Open CI smoke runs <ExternalLink size={12} />
+          </a>
+        ) : (
+          <p>
+            Optional: set{' '}
+            <code className="rounded bg-gray-50 px-1 py-0.5 text-[10px] border border-gray-200">
+              NEXT_PUBLIC_SMOKE_TESTS_URL
+            </code>{' '}
+            to deep-link CI runs from this desk.
+          </p>
+        )}
       </div>
     </div>
   )
@@ -629,12 +710,21 @@ function TabBtn({
 }
 
 function RoleBadge({ role }: { role: string }) {
-    const styles: any = {
-        super_admin: "bg-purple-100 text-purple-700 border-purple-200",
-        finance: "bg-emerald-100 text-emerald-700 border-emerald-200",
-        moderator: "bg-orange-100 text-orange-700 border-orange-200",
-        support: "bg-blue-100 text-blue-700 border-blue-200",
-        content: "bg-pink-100 text-pink-700 border-pink-200",
-    }
-    return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black border uppercase tracking-tighter ${styles[role] || 'bg-gray-100'}`}>{role.replace('_', ' ')}</span>
+  const styles: Record<string, string> = {
+    super_admin: 'bg-purple-100 text-purple-700 border-purple-200',
+    finance: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    moderator: 'bg-orange-100 text-orange-700 border-orange-200',
+    support: 'bg-blue-100 text-blue-700 border-blue-200',
+    content: 'bg-pink-100 text-pink-700 border-pink-200',
+    analyst: 'bg-slate-100 text-slate-700 border-slate-200',
+  }
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black border uppercase tracking-tighter ${
+        styles[role] || 'bg-gray-100 text-gray-600 border-gray-200'
+      }`}
+    >
+      {role.replace('_', ' ')}
+    </span>
+  )
 }

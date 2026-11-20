@@ -43,6 +43,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 400 })
   }
 
+  let sessionsRevoked = 0
+  if (!isActive) {
+    const { data: revoked, error: sessionError } = await auth.supabase
+      .from('admin_sessions')
+      .delete()
+      .eq('admin_id', staffId)
+      .select('id')
+
+    if (sessionError) {
+      const msg = sessionError.message ?? ''
+      if (!(msg.includes('admin_sessions') || msg.includes('does not exist') || msg.includes('schema cache'))) {
+        return NextResponse.json({ error: sessionError.message }, { status: 400 })
+      }
+    } else {
+      sessionsRevoked = revoked?.length ?? 0
+    }
+  }
+
   await auth.supabase.from('admin_audit_logs').insert({
     admin_id: auth.userId,
     admin_email: auth.email,
@@ -53,8 +71,9 @@ export async function POST(request: Request) {
       staffId,
       staffEmail: staff.email,
       is_active: isActive,
+      sessionsRevoked,
     },
   })
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, sessionsRevoked })
 }

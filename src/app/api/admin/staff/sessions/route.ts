@@ -58,6 +58,8 @@ export async function GET() {
 
 type RevokePayload = {
   sessionId?: string
+  /** Revoke every active session for this staff member (security reset). */
+  staffId?: string
 }
 
 export async function POST(request: Request) {
@@ -68,9 +70,55 @@ export async function POST(request: Request) {
 
   const body = (await request.json()) as RevokePayload
   const sessionId = body.sessionId?.trim()
+  const staffId = body.staffId?.trim()
+
+  if (staffId) {
+    const { data: staff } = await auth.supabase
+      .from('admin_users')
+      .select('id, email, role')
+      .eq('id', staffId)
+      .maybeSingle()
+
+    if (!staff) {
+      return NextResponse.json({ error: 'Staff member not found' }, { status: 404 })
+    }
+    if (staff.role === 'super_admin') {
+      return NextResponse.json({ error: 'Cannot force-reset super_admin sessions from this control' }, { status: 403 })
+    }
+
+    const { data: revoked, error: deleteError } = await auth.supabase
+      .from('admin_sessions')
+      .delete()
+      .eq('admin_id', staffId)
+      .select('id')
+
+    if (deleteError) {
+      const msg = deleteError.message ?? ''
+      if (msg.includes('admin_sessions') || msg.includes('does not exist') || msg.includes('schema cache')) {
+        return NextResponse.json({ ok: true, revokedCount: 0 })
+      }
+      return NextResponse.json({ error: deleteError.message }, { status: 400 })
+    }
+
+    const revokedCount = revoked?.length ?? 0
+    await auth.supabase.from('admin_audit_logs').insert({
+      admin_id: auth.userId,
+      admin_email: auth.email,
+      action_type: 'STAFF_SECURITY_RESET',
+      target_id: staffId,
+      details: {
+        message: 'Forced security reset: revoked all staff sessions.',
+        staffId,
+        staffEmail: staff.email,
+        revokedCount,
+      },
+    })
+
+    return NextResponse.json({ ok: true, revokedCount })
+  }
 
   if (!sessionId) {
-    return NextResponse.json({ error: 'sessionId is required' }, { status: 400 })
+    return NextResponse.json({ error: 'sessionId or staffId is required' }, { status: 400 })
   }
 
   const { data: session, error: fetchError } = await auth.supabase
